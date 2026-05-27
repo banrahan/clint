@@ -497,6 +497,13 @@ body {{
   border-radius: 6px;
   margin-top: 8px;
 }}
+.screenshot svg {{
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-top: 8px;
+}}
 
 /* Final capture */
 .final-section {{
@@ -583,9 +590,12 @@ body {{
     <span class="severity-badge" style="background: {sev_color};">{bug.severity}</span>
   </div>
   <div class="bug-desc">{bug.description}</div>
-  <div class="bug-step">Step {bug.step_index}{' — ' + os.path.basename(bug.screenshot_path) if bug.screenshot_path else ''}</div>
-</div>
+  <div class="bug-step">Step {bug.step_index}</div>
 """
+            if bug.screenshot_path and os.path.exists(bug.screenshot_path):
+                bug_svg = Path(bug.screenshot_path).read_text()
+                html += f'  <div class="screenshot">{bug_svg}</div>\n'
+            html += '</div>\n'
     elif failed_steps:
         # Auto-generate bug entries from failed steps
         for step in failed_steps:
@@ -629,8 +639,8 @@ body {{
             html += f'    <div class="error-msg">⚠️ {step.error}</div>\n'
         html += f'    <pre>Action: {step.action}{timestamp_str}</pre>\n'
         if step.svg_path and os.path.exists(step.svg_path):
-            svg_name = os.path.basename(step.svg_path)
-            html += f'    <object data="{svg_name}" type="image/svg+xml" width="100%"></object>\n'
+            svg_content = Path(step.svg_path).read_text()
+            html += f'    <div class="screenshot">{svg_content}</div>\n'
         html += '  </div>\n</div>\n'
 
     html += '</div>\n'
@@ -638,10 +648,11 @@ body {{
     # --- Final capture ---
     final_svg = os.path.join(run_dir, "final.svg")
     if os.path.exists(final_svg):
-        html += """
+        final_svg_content = Path(final_svg).read_text()
+        html += f"""
 <div class="final-section">
   <h2>🏁 Final State</h2>
-  <object data="final.svg" type="image/svg+xml" width="100%"></object>
+  <div class="screenshot">{final_svg_content}</div>
 </div>
 """
 
