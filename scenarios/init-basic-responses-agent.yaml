@@ -29,10 +29,10 @@ goals:
   - "When asked how to deploy, select 'Container' (hosted agent)"
 
   # Azure Foundry project
-  - "If asked to select an Azure AI Foundry project, pick the first one available. If no projects exist, follow prompts to create one."
+  - "If asked to select an Azure AI Foundry project, create one and follow prompts to create one."
 
   # Subscription
-  - "If asked to select a subscription, pick the first one"
+  - "If asked to select a subscription, search for and select the 'benhanrahan' subscription"
 
   # Region / location
   - "If asked for a location or region, select 'East US 2'"
@@ -60,3 +60,6 @@ goals:
 
   # Take a screenshot of the final state
   - "Take a screenshot of the completed init output"
+
+  # Verify the generated project
+  - "Verify the init succeeded by checking that azure.yaml exists in the output directory and contains the expected settings: gpt-4.1-mini model, Standard SKU, capacity 10, 0.5 CPU / 1Gi memory, and docker language"

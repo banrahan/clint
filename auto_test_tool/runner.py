@@ -103,13 +103,41 @@ def tmux_kill_session(session: str) -> None:
     )
 
 
+def tmux_session_alive(session: str) -> bool:
+    """Check if a tmux session's pane process is still running."""
+    try:
+        result = subprocess.run(
+            ["tmux", "list-panes", "-t", session, "-F", "#{pane_dead}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        # pane_dead is "1" when the command has exited
+        return result.returncode == 0 and result.stdout.strip() != "1"
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return False
+
+
 def tmux_capture_pane(session: str, with_ansi: bool = True) -> str:
-    """Capture the current tmux pane content."""
+    """Capture the current tmux pane content.
+
+    If the visible pane is empty (e.g. the process exited), falls back to
+    capturing the full scrollback history so the final output is preserved.
+    """
     cmd = ["tmux", "capture-pane", "-t", session, "-p"]
     if with_ansi:
         cmd.append("-e")  # include ANSI escape sequences
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-    return result.stdout
+    text = result.stdout
+
+    # If the visible pane is empty, grab the full scrollback
+    if not text.strip():
+        cmd_full = ["tmux", "capture-pane", "-t", session, "-p", "-S", "-"]
+        if with_ansi:
+            cmd_full.append("-e")
+        result_full = subprocess.run(cmd_full, capture_output=True, text=True, timeout=5)
+        if result_full.stdout.strip():
+            text = result_full.stdout
+
+    return text
 
 
 def tmux_send_keys(session: str, keys: str) -> None:

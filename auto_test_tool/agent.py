@@ -30,6 +30,7 @@ from .runner import (
     tmux_kill_session,
     tmux_send_keys,
     tmux_send_text,
+    tmux_session_alive,
     tmux_session_name,
     ScenarioResult,
     StepResult,
@@ -152,7 +153,17 @@ class AgentSession:
         return self.observe()
 
     def observe(self) -> str:
-        """Capture and return the current terminal state as plain text."""
+        """Capture and return the current terminal state as plain text.
+
+        If the underlying process has exited, returns the final scrollback
+        output prefixed with a marker so the caller knows the session ended.
+        """
+        # Check if the process is still running
+        if not tmux_session_alive(self.session_name):
+            current = tmux_capture_pane(self.session_name, with_ansi=False)
+            self.prev_capture = current
+            return f"[SESSION EXITED]\n{current}"
+
         for _ in range(10):
             current = tmux_capture_pane(self.session_name, with_ansi=False)
             if current.strip() != self.prev_capture.strip():
