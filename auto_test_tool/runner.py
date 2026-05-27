@@ -244,6 +244,13 @@ def execute_action(session: str, step: dict) -> None:
         tmux_send_text(session, text)
         tmux_send_keys(session, "Enter")
 
+    elif action == "key":
+        key = step.get("key", "")
+        count = step.get("count", 1)
+        for _ in range(count):
+            tmux_send_keys(session, key)
+            time.sleep(0.05)
+
     elif action == "multi_select":
         # Toggle specified items then confirm
         indices = step.get("toggle_indices", [0])

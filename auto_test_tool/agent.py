@@ -76,6 +76,14 @@ def _execute_agent_action(session: str, action: dict) -> None:
         tmux_send_text(session, text)
         tmux_send_keys(session, "Enter")
 
+    elif act == "key":
+        # Send raw tmux key names: BSpace, Escape, C-c, Up, Down, etc.
+        key = action.get("key", "")
+        count = action.get("count", 1)
+        for _ in range(count):
+            tmux_send_keys(session, key)
+            time.sleep(0.05)
+
     elif act == "multi_select":
         indices = action.get("toggle_indices", [0])
         current = 0
@@ -144,12 +152,22 @@ class AgentSession:
         )
 
     def start(self) -> str:
-        """Start the tmux session and return the initial terminal state."""
+        """Start the tmux session and return the initial terminal state.
+
+        Launches a shell first, then sends the command as input.
+        This keeps the shell alive after the command exits so we can
+        still observe output and run follow-up commands.
+        """
         os.makedirs(self.run_dir, exist_ok=True)
         cwd_expanded = os.path.expanduser(self.cwd)
         os.makedirs(cwd_expanded, exist_ok=True)
 
-        tmux_create_session(self.session_name, self.command, self.cwd, self.env)
+        # Start a shell (not the command directly) so the session survives
+        tmux_create_session(self.session_name, "bash", self.cwd, self.env)
+        time.sleep(0.5)
+        # Send the actual command into the shell
+        tmux_send_text(self.session_name, self.command)
+        tmux_send_keys(self.session_name, "Enter")
         time.sleep(2)
         return self.observe()
 

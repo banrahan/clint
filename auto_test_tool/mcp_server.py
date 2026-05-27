@@ -133,6 +133,8 @@ def send_action(
     text: str | None = None,
     toggle_indices: list[int] | None = None,
     seconds: float | None = None,
+    key: str | None = None,
+    count: int = 1,
     session_id: str = "default",
 ) -> str:
     """Send an action to the interactive CLI prompt.
@@ -145,15 +147,20 @@ def send_action(
                        Empty string accepts the default value.
         multi_select — Toggle items in a multi-select list, then press Enter.
                        Provide toggle_indices as a list of 0-based positions.
+        key          — Send raw key(s) to the terminal. Use tmux key names:
+                       BSpace, Escape, C-c, Up, Down, Left, Right, Tab, etc.
+                       Use count to repeat (e.g. key="BSpace", count=5).
         wait         — Pause for a number of seconds (default 2) without sending keys.
 
     Args:
-        action: One of "select", "confirm", "input", "multi_select", "wait".
+        action: One of "select", "confirm", "input", "multi_select", "key", "wait".
         choice_index: For select — 0-based index of the item to pick.
         choice_text: For select — text label to match (scrolls down to find it).
         value: For confirm — true for yes, false for no.
         text: For input — the text to type.
         toggle_indices: For multi_select — list of 0-based indices to toggle.
+        key: For key — tmux key name (BSpace, Escape, C-c, Up, Down, etc.).
+        count: For key — number of times to send the key (default 1).
         seconds: For wait — how long to pause.
         session_id: Which session to act on.
 
@@ -182,11 +189,15 @@ def send_action(
     elif action == "multi_select":
         action_dict["toggle_indices"] = toggle_indices or [0]
 
+    elif action == "key":
+        action_dict["key"] = key or "BSpace"
+        action_dict["count"] = count
+
     elif action == "wait":
         action_dict["seconds"] = seconds if seconds is not None else 2
 
     else:
-        return f"ERROR: Unknown action '{action}'. Use: select, confirm, input, multi_select, wait."
+        return f"ERROR: Unknown action '{action}'. Use: select, confirm, input, multi_select, key, wait."
 
     new_state = session.act(action_dict)
     return new_state
