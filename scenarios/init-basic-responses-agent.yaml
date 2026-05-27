@@ -1,0 +1,62 @@
+# Scenario: Init Basic Responses agent → deploy → modify for vacation planning
+#
+# Task 1: Build and deploy a simple "basic responses" hosted agent (Python).
+# Task 2: Modify it into a vacation planner with web search (Bing grounding).
+#
+# Based on the hosted agents quickstart:
+#   https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent
+
+name: "init-basic-responses-agent"
+command: "azd ai agent init"
+cwd: "~/working/agents/basic-responses-test"
+
+env:
+  AZD_DISABLE_AGENT_DETECT: "1"
+
+goals:
+  # --- Task 1: Build and deploy ---
+
+  # Init mode
+  - "When asked how to initialize, select 'Start new from a template'"
+
+  # Language
+  - "Select Python as the language"
+
+  # Template — pick 'Basic Responses' (the simple conversational agent)
+  - "Select the 'Basic Responses' template from the list"
+
+  # Deployment mode
+  - "When asked how to deploy, select 'Container' (hosted agent)"
+
+  # Azure Foundry project
+  - "If asked to select an Azure AI Foundry project, pick the first one available. If no projects exist, follow prompts to create one."
+
+  # Subscription
+  - "If asked to select a subscription, pick the first one"
+
+  # Region / location
+  - "If asked for a location or region, select 'East US 2'"
+
+  # Model selection
+  - "When asked to select a model, choose 'gpt-4.1-mini' (cheaper and faster for testing)"
+
+  # Model version — accept default
+  - "If asked for a model version, accept the default"
+
+  # Model SKU — accept default
+  - "If asked for a model SKU, accept the default"
+
+  # Model capacity
+  - "If asked for model capacity, enter '10' or accept the default"
+
+  # Model deployment name — accept default
+  - "If asked for a model deployment name, accept the default (press Enter)"
+
+  # Container size
+  - "If asked for container/resource size, select 'Small'"
+
+  # Wait for init to complete
+  - "Wait for initialization to complete — look for 'Next:' or 'SUCCESS' in the output"
+
+  # Take a screenshot of the final state
+  - "Take a screenshot of the completed init output"
