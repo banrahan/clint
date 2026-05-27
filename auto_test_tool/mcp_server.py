@@ -227,18 +227,24 @@ def finish_session(session_id: str = "default") -> str:
     return f"Session finished. Report: {report_path}"
 
 
-@mcp.resource("scenario://{path}")
-def read_scenario(path: str) -> str:
-    """Read a scenario YAML file and return its contents.
+@mcp.tool()
+def load_scenario(path: str) -> str:
+    """Read a scenario YAML file and return its goals and configuration.
 
-    The scenario describes the goals for the CLI session. It may contain:
-    - name, command, cwd, env: session configuration
-    - goals: list of high-level goal descriptions (what to accomplish)
-    - goal: single free-text description of the overall objective
+    Call this first to understand what the scenario wants you to do,
+    then use start_session with the command/cwd/env from the scenario.
 
-    The agent should use these goals to decide what actions to take
-    while observing the terminal state.
+    Args:
+        path: Path to the YAML scenario file (absolute or relative, supports ~).
+
+    Returns:
+        Structured summary of the scenario: name, command, cwd, env, and goals.
     """
+    return _read_scenario_file(path)
+
+
+def _read_scenario_file(path: str) -> str:
+    """Internal: parse a scenario YAML and return a structured summary."""
     expanded = os.path.expanduser(path)
     if not os.path.isfile(expanded):
         return f"ERROR: Scenario file not found: {expanded}"
@@ -246,7 +252,6 @@ def read_scenario(path: str) -> str:
     with open(expanded) as f:
         data = yaml.safe_load(f)
 
-    # Return both raw YAML and a structured summary
     parts = [f"Scenario: {data.get('name', '(unnamed)')}"]
     parts.append(f"Command: {data.get('command', '(none)')}")
     if data.get("cwd"):
@@ -261,13 +266,18 @@ def read_scenario(path: str) -> str:
     elif data.get("goal"):
         parts.append(f"\nGoal:\n{data['goal']}")
     elif data.get("steps"):
-        # Legacy format — present steps as goals for the agent
         parts.append("\nSteps (legacy format — treat as goals):")
         for i, step in enumerate(data["steps"], 1):
             desc = f"Wait for '{step.get('expect', '')}' then {step.get('action', 'wait')}"
             parts.append(f"  {i}. {desc}")
 
     return "\n".join(parts)
+
+
+@mcp.resource("scenario://{path}")
+def read_scenario(path: str) -> str:
+    """Read a scenario YAML file and return its contents."""
+    return _read_scenario_file(path)
 
 
 def main():

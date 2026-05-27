@@ -11,6 +11,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -148,7 +149,7 @@ def wait_for_text(
 
 def render_ansi_to_svg(ansi_text: str, output_path: str, title: str = "") -> None:
     """Render ANSI text to an SVG file using Rich."""
-    console = Console(record=True, width=120, force_terminal=True)
+    console = Console(record=True, width=120, force_terminal=True, file=open(os.devnull, "w"))
     text = Text.from_ansi(ansi_text)
     console.print(text)
     svg = console.export_svg(title=title or "Terminal Capture")
@@ -280,6 +281,6 @@ def generate_html_report(run_dir: str, result: ScenarioResult) -> None:
 
     report_path = os.path.join(run_dir, "report.html")
     Path(report_path).write_text("\n".join(html_parts))
-    print(f"📄 Report: {report_path}")
+    print(f"📄 Report: {report_path}", file=sys.stderr)
 
 
