@@ -63,3 +63,15 @@ goals:
 
   # Verify the generated project
   - "Verify the init succeeded by checking that azure.yaml exists in the output directory and contains the expected settings: gpt-4.1-mini model, Standard SKU, capacity 10, 0.5 CPU / 1Gi memory, and docker language"
+
+  # provision the agent after init
+  - "once init is done figure out how to provision the agent"
+
+  # run the agent locally
+  - "azd ai agent run"
+
+  # invoke the agent locally
+  - "azd ai agent invoke --local 'hello'"
+
+  # do an azd down to clean up
+  - "do an azd down to clean up"
