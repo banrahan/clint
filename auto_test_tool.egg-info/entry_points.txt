@@ -1,2 +1,0 @@
-[console_scripts]
-azd-test-mcp = auto_test_tool.mcp_server:main
