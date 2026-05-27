@@ -209,6 +209,37 @@ def screenshot(label: str = "", session_id: str = "default") -> str:
 
 
 @mcp.tool()
+def report_bug(
+    title: str,
+    description: str = "",
+    severity: str = "medium",
+    session_id: str = "default",
+) -> str:
+    """Report a bug or issue found during the session.
+
+    Automatically captures a screenshot at the current terminal state.
+    Bugs are collected and displayed in the final HTML report.
+
+    Args:
+        title: Short summary of the bug (e.g. "Crash on empty input").
+        description: Longer explanation of what happened and expected behavior.
+        severity: One of "low", "medium", "high", "critical".
+        session_id: Which session to report against.
+
+    Returns:
+        Confirmation with the screenshot path.
+    """
+    session = _get_session(session_id)
+    svg_path = session.report_bug(
+        title=title,
+        description=description,
+        severity=severity,
+    )
+    bug_count = len(session.result.bugs)
+    return f"Bug #{bug_count} reported: {title} [{severity}]\nScreenshot: {svg_path}"
+
+
+@mcp.tool()
 def finish_session(session_id: str = "default") -> str:
     """Stop the terminal session and generate an HTML report.
 

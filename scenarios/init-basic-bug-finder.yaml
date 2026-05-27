@@ -1,0 +1,44 @@
+# Scenario: Bug-finding exploration of azd ai agent init
+#
+# Goal: Probe the interactive init flow for edge cases, unexpected behavior,
+# error handling issues, and UI glitches. Use the benhanrahan subscription,
+# East US 2, and gpt-4.1-mini as your baseline, but intentionally deviate
+# from the happy path to surface bugs.
+
+name: "init-basic-bug-finder"
+command: "azd ai agent init"
+cwd: "~/working/agents/bug-finder-test"
+
+env:
+  AZD_DISABLE_AGENT_DETECT: "1"
+
+goal: |
+  You are a QA tester trying to find bugs in the `azd ai agent init` CLI flow.
+  Your job is to intentionally explore edge cases and unexpected inputs to
+  surface issues. Use 'benhanrahan' as the subscription, East US 2 as the
+  region, and gpt-4.1-mini as the model — but try to break things along the way.
+
+  Things to try (mix and match, use your judgment):
+
+  - Type garbage or special characters into free-text fields (agent name,
+    deployment name, capacity) before correcting them. Does the CLI handle
+    bad input gracefully? Does it show a helpful error?
+  - Try entering 0 or negative numbers for model capacity.
+  - Try entering extremely large numbers for capacity (e.g., 999999).
+  - Use the filter/search on list prompts — type partial matches, typos,
+    or strings that match nothing. Does the list recover when you clear?
+  - Arrow past the end of a list — what happens if you press Down 50 times
+    on a 6-item list?
+  - Press Escape, Ctrl-C, or other interrupt keys mid-prompt — does it
+    abort cleanly or leave a mess?
+  - Navigate backward if possible — can you go back to a previous question?
+  - Select a template, then try to change your mind.
+  - Type '?' at prompts that mention hints — are the hints helpful?
+  - Enter emoji or unicode in text fields.
+  - Try spaces-only or very long strings (100+ chars) as agent names.
+
+  After each interesting finding, take a screenshot. At the end, take a
+  final screenshot and note what you found.
+
+  Remember: the point is NOT to complete a successful init (though you may
+  end up doing so). The point is to find rough edges. Be creative.

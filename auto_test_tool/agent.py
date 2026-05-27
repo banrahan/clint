@@ -32,6 +32,7 @@ from .runner import (
     tmux_send_text,
     tmux_session_alive,
     tmux_session_name,
+    BugReport,
     ScenarioResult,
     StepResult,
     ANSI_RE,
@@ -206,6 +207,8 @@ class AgentSession:
             step_index=self.step_index,
             expect_pattern="(agent-driven)",
             action=json.dumps(action),
+            label=action.get("label", f"{action.get('action', '?')}"),
+            timestamp=datetime.now().isoformat(),
         )
         start = time.time()
 
@@ -237,6 +240,24 @@ class AgentSession:
         self.step_index += 1
 
         return self.observe()
+
+    def report_bug(
+        self,
+        title: str,
+        description: str = "",
+        severity: str = "medium",
+    ) -> str:
+        """Record a bug found during the session. Automatically takes a screenshot."""
+        svg_path = self.screenshot(label=f"Bug: {title}")
+        bug = BugReport(
+            step_index=self.step_index,
+            title=title,
+            description=description,
+            severity=severity,
+            screenshot_path=svg_path,
+        )
+        self.result.bugs.append(bug)
+        return svg_path
 
     def finish(self) -> str:
         """Stop the session, generate report, return report path."""

@@ -39,6 +39,19 @@ class StepResult:
     elapsed_seconds: float = 0.0
     success: bool = True
     error: str = ""
+    label: str = ""
+    timestamp: str = ""
+
+
+@dataclass
+class BugReport:
+    """A bug or issue found during the session."""
+
+    step_index: int
+    title: str
+    description: str = ""
+    severity: str = "medium"  # low, medium, high, critical
+    screenshot_path: str = ""
 
 
 @dataclass
@@ -50,6 +63,7 @@ class ScenarioResult:
     start_time: str = ""
     end_time: str = ""
     steps: list[StepResult] = field(default_factory=list)
+    bugs: list[BugReport] = field(default_factory=list)
     success: bool = True
     error: str = ""
 
@@ -252,63 +266,404 @@ def execute_action(session: str, step: dict) -> None:
 
 
 def generate_html_report(run_dir: str, result: ScenarioResult) -> None:
-    """Generate an HTML report with embedded SVG screenshots."""
-    html_parts = [
-        "<!DOCTYPE html><html><head>",
-        "<meta charset='utf-8'>",
-        f"<title>Test: {result.name}</title>",
-        "<style>",
-        "body { font-family: -apple-system, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }",
-        ".step { margin: 20px 0; border: 1px solid #ddd; border-radius: 8px; padding: 16px; }",
-        ".step.fail { border-color: #e74c3c; }",
-        ".step-header { display: flex; justify-content: space-between; margin-bottom: 8px; }",
-        ".badge { padding: 2px 8px; border-radius: 4px; font-size: 12px; }",
-        ".badge-pass { background: #2ecc71; color: white; }",
-        ".badge-fail { background: #e74c3c; color: white; }",
-        "img, object { max-width: 100%; border: 1px solid #eee; border-radius: 4px; }",
-        "pre { background: #f5f5f5; padding: 12px; border-radius: 4px; overflow-x: auto; }",
-        "</style></head><body>",
-        f"<h1>🧪 {result.name}</h1>",
-        f"<p><code>{result.command}</code></p>",
-        f"<p>{'✅ Passed' if result.success else '❌ Failed: ' + result.error}</p>",
-        f"<p>{result.start_time} → {result.end_time}</p>",
-    ]
+    """Generate an HTML report with timeline, bugs section, and embedded SVG screenshots."""
 
+    total_time = sum(s.elapsed_seconds for s in result.steps)
+    failed_steps = [s for s in result.steps if not s.success]
+    bug_count = len(result.bugs)
+
+    # Severity colors
+    sev_colors = {
+        "critical": "#dc2626",
+        "high": "#ea580c",
+        "medium": "#d97706",
+        "low": "#65a30d",
+    }
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Test Report: {result.name}</title>
+<style>
+:root {{
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --surface2: #0f3460;
+  --text: #e6e6e6;
+  --text-muted: #94a3b8;
+  --accent: #e94560;
+  --green: #22c55e;
+  --red: #ef4444;
+  --yellow: #eab308;
+  --blue: #3b82f6;
+  --border: #334155;
+}}
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+body {{
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}}
+.container {{ max-width: 1200px; margin: 0 auto; padding: 24px; }}
+
+/* Header */
+.header {{
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 24px;
+}}
+.header h1 {{ font-size: 1.5rem; margin-bottom: 8px; }}
+.header .command {{ color: var(--text-muted); font-family: monospace; font-size: 0.9rem; }}
+.stats {{
+  display: flex;
+  gap: 24px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}}
+.stat {{
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 12px 20px;
+  text-align: center;
+  min-width: 100px;
+}}
+.stat-value {{ font-size: 1.5rem; font-weight: 700; }}
+.stat-label {{ font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }}
+.stat-pass .stat-value {{ color: var(--green); }}
+.stat-fail .stat-value {{ color: var(--red); }}
+.stat-bug .stat-value {{ color: var(--yellow); }}
+
+/* Timeline */
+.timeline-section {{
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 24px;
+}}
+.timeline-section h2 {{ font-size: 1.1rem; margin-bottom: 16px; }}
+.timeline-bar {{
+  display: flex;
+  height: 32px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg);
+  margin-bottom: 8px;
+}}
+.timeline-bar .segment {{
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  color: white;
+  cursor: pointer;
+  transition: opacity 0.2s;
+  min-width: 2px;
+  border-right: 1px solid var(--bg);
+}}
+.timeline-bar .segment:hover {{ opacity: 0.8; }}
+.timeline-bar .segment.pass {{ background: var(--green); }}
+.timeline-bar .segment.fail {{ background: var(--red); }}
+.timeline-legend {{
+  display: flex;
+  gap: 16px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}}
+.timeline-legend span::before {{
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}}
+.timeline-legend .leg-pass::before {{ background: var(--green); }}
+.timeline-legend .leg-fail::before {{ background: var(--red); }}
+
+/* Bugs Section */
+.bugs-section {{
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 24px;
+}}
+.bugs-section h2 {{ font-size: 1.1rem; margin-bottom: 16px; }}
+.bug-card {{
+  background: var(--bg);
+  border-left: 4px solid var(--yellow);
+  border-radius: 0 8px 8px 0;
+  padding: 16px;
+  margin-bottom: 12px;
+}}
+.bug-card .bug-header {{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}}
+.bug-card .bug-title {{ font-weight: 600; }}
+.severity-badge {{
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: white;
+}}
+.bug-card .bug-desc {{ color: var(--text-muted); font-size: 0.9rem; }}
+.bug-card .bug-step {{ color: var(--text-muted); font-size: 0.75rem; margin-top: 4px; }}
+.no-bugs {{
+  text-align: center;
+  padding: 32px;
+  color: var(--green);
+  font-size: 1.1rem;
+}}
+
+/* Steps */
+.steps-section {{
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 24px;
+}}
+.steps-section h2 {{ font-size: 1.1rem; margin-bottom: 16px; }}
+.step {{
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}}
+.step.fail {{ border-color: var(--red); }}
+.step-summary {{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  cursor: pointer;
+  user-select: none;
+}}
+.step-summary:hover {{ background: var(--surface2); }}
+.step-summary .step-left {{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}}
+.step-summary .step-icon {{ font-size: 0.9rem; }}
+.step-summary .step-label {{ font-size: 0.9rem; }}
+.step-summary .step-right {{
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}}
+.step-details {{
+  display: none;
+  padding: 16px;
+  border-top: 1px solid var(--border);
+}}
+.step.open .step-details {{ display: block; }}
+.step-details pre {{
+  background: var(--surface);
+  padding: 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  margin-top: 8px;
+}}
+.step-details .error-msg {{
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid var(--red);
+  color: var(--red);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  margin-bottom: 8px;
+}}
+.step-details object, .step-details img {{
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-top: 8px;
+}}
+
+/* Final capture */
+.final-section {{
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 24px;
+}}
+.final-section h2 {{ font-size: 1.1rem; margin-bottom: 16px; }}
+.final-section object {{ max-width: 100%; border: 1px solid var(--border); border-radius: 6px; }}
+</style>
+</head>
+<body>
+<div class="container">
+"""
+
+    # --- Header ---
+    status_emoji = "✅" if result.success else "❌"
+    status_text = "Passed" if result.success else f"Failed: {result.error}"
+    html += f"""
+<div class="header">
+  <h1>{status_emoji} {result.name}</h1>
+  <div class="command">{result.command}</div>
+  <div class="stats">
+    <div class="stat stat-pass">
+      <div class="stat-value">{len(result.steps) - len(failed_steps)}</div>
+      <div class="stat-label">Passed</div>
+    </div>
+    <div class="stat stat-fail">
+      <div class="stat-value">{len(failed_steps)}</div>
+      <div class="stat-label">Failed</div>
+    </div>
+    <div class="stat stat-bug">
+      <div class="stat-value">{bug_count}</div>
+      <div class="stat-label">Bugs</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">{total_time:.1f}s</div>
+      <div class="stat-label">Duration</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">{len(result.steps)}</div>
+      <div class="stat-label">Steps</div>
+    </div>
+  </div>
+  <div style="margin-top: 12px; font-size: 0.8rem; color: var(--text-muted);">
+    {result.start_time} → {result.end_time}
+  </div>
+</div>
+"""
+
+    # --- Timeline ---
+    html += '<div class="timeline-section"><h2>⏱ Timeline</h2>\n<div class="timeline-bar">\n'
+    if total_time > 0:
+        for step in result.steps:
+            pct = max((step.elapsed_seconds / total_time) * 100, 0.5)
+            cls = "pass" if step.success else "fail"
+            label = step.label or f"Step {step.step_index}"
+            # Truncate long labels for the bar
+            short_label = label[:20] if len(label) > 20 else label
+            html += (
+                f'  <div class="segment {cls}" style="width:{pct:.1f}%" '
+                f'title="{label} ({step.elapsed_seconds:.1f}s)" '
+                f'onclick="toggleStep({step.step_index})">'
+                f'{short_label if pct > 8 else ""}</div>\n'
+            )
+    html += '</div>\n'
+    html += '<div class="timeline-legend">'
+    html += '<span class="leg-pass">Pass</span>'
+    html += '<span class="leg-fail">Fail</span>'
+    html += f'<span>Total: {total_time:.1f}s</span>'
+    html += '</div>\n</div>\n'
+
+    # --- Bugs Section ---
+    html += '<div class="bugs-section"><h2>🐛 Bugs &amp; Issues</h2>\n'
+    if result.bugs:
+        for bug in result.bugs:
+            sev_color = sev_colors.get(bug.severity, sev_colors["medium"])
+            html += f"""
+<div class="bug-card" style="border-left-color: {sev_color};">
+  <div class="bug-header">
+    <span class="bug-title">{bug.title}</span>
+    <span class="severity-badge" style="background: {sev_color};">{bug.severity}</span>
+  </div>
+  <div class="bug-desc">{bug.description}</div>
+  <div class="bug-step">Step {bug.step_index}{' — ' + os.path.basename(bug.screenshot_path) if bug.screenshot_path else ''}</div>
+</div>
+"""
+    elif failed_steps:
+        # Auto-generate bug entries from failed steps
+        for step in failed_steps:
+            html += f"""
+<div class="bug-card">
+  <div class="bug-header">
+    <span class="bug-title">Step {step.step_index} failed</span>
+    <span class="severity-badge" style="background: {sev_colors['high']};">high</span>
+  </div>
+  <div class="bug-desc">{step.error or 'Step did not complete successfully.'}</div>
+  <div class="bug-step">Action: {step.action}</div>
+</div>
+"""
+    else:
+        html += '<div class="no-bugs">✅ No bugs found</div>\n'
+    html += '</div>\n'
+
+    # --- Steps ---
+    html += '<div class="steps-section"><h2>📋 Steps</h2>\n'
     for step in result.steps:
-        fail_class = "" if step.success else " fail"
-        badge = "badge-pass" if step.success else "badge-fail"
-        badge_text = "PASS" if step.success else "FAIL"
+        fail_cls = " fail" if not step.success else ""
+        icon = "❌" if not step.success else "✅"
+        label = step.label or f"expect \"{step.expect_pattern}\" → {step.action}"
+        time_str = f"{step.elapsed_seconds:.1f}s"
+        timestamp_str = f" at {step.timestamp}" if step.timestamp else ""
 
-        html_parts.append(f'<div class="step{fail_class}">')
-        html_parts.append('<div class="step-header">')
-        html_parts.append(
-            f"<strong>Step {step.step_index}: expect \"{step.expect_pattern}\" → {step.action}</strong>"
-        )
-        html_parts.append(
-            f'<span class="badge {badge}">{badge_text} ({step.elapsed_seconds:.1f}s)</span>'
-        )
-        html_parts.append("</div>")
-
+        html += f"""
+<div class="step{fail_cls}" id="step-{step.step_index}">
+  <div class="step-summary" onclick="this.parentElement.classList.toggle('open')">
+    <div class="step-left">
+      <span class="step-icon">{icon}</span>
+      <span class="step-label"><strong>Step {step.step_index}</strong> — {label}</span>
+    </div>
+    <div class="step-right">
+      <span>{time_str}</span>
+    </div>
+  </div>
+  <div class="step-details">
+"""
         if step.error:
-            html_parts.append(f"<p style='color: #e74c3c;'>Error: {step.error}</p>")
-
+            html += f'    <div class="error-msg">⚠️ {step.error}</div>\n'
+        html += f'    <pre>Action: {step.action}{timestamp_str}</pre>\n'
         if step.svg_path and os.path.exists(step.svg_path):
             svg_name = os.path.basename(step.svg_path)
-            html_parts.append(f'<object data="{svg_name}" type="image/svg+xml" width="100%"></object>')
+            html += f'    <object data="{svg_name}" type="image/svg+xml" width="100%"></object>\n'
+        html += '  </div>\n</div>\n'
 
-        html_parts.append("</div>")
+    html += '</div>\n'
 
-    # Final capture
+    # --- Final capture ---
     final_svg = os.path.join(run_dir, "final.svg")
     if os.path.exists(final_svg):
-        html_parts.append('<div class="step"><strong>Final State</strong>')
-        html_parts.append('<object data="final.svg" type="image/svg+xml" width="100%"></object>')
-        html_parts.append("</div>")
+        html += """
+<div class="final-section">
+  <h2>🏁 Final State</h2>
+  <object data="final.svg" type="image/svg+xml" width="100%"></object>
+</div>
+"""
 
-    html_parts.append("</body></html>")
+    # --- Script for interactivity ---
+    html += """
+<script>
+function toggleStep(index) {
+  const el = document.getElementById('step-' + index);
+  if (el) {
+    el.classList.toggle('open');
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+// Auto-expand failed steps
+document.querySelectorAll('.step.fail').forEach(el => el.classList.add('open'));
+</script>
+"""
+
+    html += '</div></body></html>'
 
     report_path = os.path.join(run_dir, "report.html")
-    Path(report_path).write_text("\n".join(html_parts))
+    Path(report_path).write_text(html)
     print(f"📄 Report: {report_path}", file=sys.stderr)
 
 
