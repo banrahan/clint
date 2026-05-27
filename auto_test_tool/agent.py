@@ -32,7 +32,7 @@ from .runner import (
     tmux_send_text,
     tmux_session_alive,
     tmux_session_name,
-    BugReport,
+    Finding,
     ScenarioResult,
     StepResult,
     ANSI_RE,
@@ -259,22 +259,22 @@ class AgentSession:
 
         return self.observe()
 
-    def report_bug(
+    def report_finding(
         self,
         title: str,
         description: str = "",
-        severity: str = "medium",
+        category: str = "bug",
     ) -> str:
-        """Record a bug found during the session. Automatically takes a screenshot."""
-        svg_path = self.screenshot(label=f"Bug: {title}")
-        bug = BugReport(
+        """Record a finding during the session. Automatically takes a screenshot."""
+        svg_path = self.screenshot(label=f"{category}: {title}")
+        finding = Finding(
             step_index=self.step_index,
             title=title,
             description=description,
-            severity=severity,
+            category=category,
             screenshot_path=svg_path,
         )
-        self.result.bugs.append(bug)
+        self.result.findings.append(finding)
         return svg_path
 
     def finish(self) -> str:
@@ -303,6 +303,29 @@ class AgentSession:
                     "success": self.result.success,
                     "error": self.result.error,
                     "total_steps": len(self.result.steps),
+                    "steps": [
+                        {
+                            "step_index": s.step_index,
+                            "action": s.action,
+                            "label": s.label,
+                            "timestamp": s.timestamp,
+                            "svg_path": s.svg_path,
+                            "success": s.success,
+                            "error": s.error,
+                            "elapsed_seconds": s.elapsed_seconds,
+                        }
+                        for s in self.result.steps
+                    ],
+                    "findings": [
+                        {
+                            "step_index": f.step_index,
+                            "title": f.title,
+                            "description": f.description,
+                            "category": f.category,
+                            "screenshot_path": f.screenshot_path,
+                        }
+                        for f in self.result.findings
+                    ],
                 },
                 f,
                 indent=2,

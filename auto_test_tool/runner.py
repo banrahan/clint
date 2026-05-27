@@ -44,13 +44,13 @@ class StepResult:
 
 
 @dataclass
-class BugReport:
-    """A bug or issue found during the session."""
+class Finding:
+    """A finding from the testing session — bug, UX issue, or observation."""
 
     step_index: int
     title: str
     description: str = ""
-    severity: str = "medium"  # low, medium, high, critical
+    category: str = "bug"  # bug, ux-issue, observation
     screenshot_path: str = ""
 
 
@@ -63,7 +63,7 @@ class ScenarioResult:
     start_time: str = ""
     end_time: str = ""
     steps: list[StepResult] = field(default_factory=list)
-    bugs: list[BugReport] = field(default_factory=list)
+    findings: list[Finding] = field(default_factory=list)
     success: bool = True
     error: str = ""
 
@@ -277,15 +277,27 @@ def generate_html_report(run_dir: str, result: ScenarioResult) -> None:
 
     total_time = sum(s.elapsed_seconds for s in result.steps)
     failed_steps = [s for s in result.steps if not s.success]
-    bug_count = len(result.bugs)
 
-    # Severity colors
-    sev_colors = {
-        "critical": "#dc2626",
-        "high": "#ea580c",
-        "medium": "#d97706",
-        "low": "#65a30d",
+    # Finding categories and colors
+    cat_colors = {
+        "bug": "#ef4444",        # red
+        "ux-issue": "#eab308",   # yellow
+        "observation": "#3b82f6", # blue
     }
+    cat_labels = {
+        "bug": "Bug",
+        "ux-issue": "UX Issue",
+        "observation": "Observation",
+    }
+    cat_icons = {
+        "bug": "🐛",
+        "ux-issue": "⚠️",
+        "observation": "💡",
+    }
+    # Count findings by category
+    from collections import Counter
+    finding_counts = Counter(f.category for f in result.findings)
+    bug_count = finding_counts.get("bug", 0)
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -340,9 +352,6 @@ body {{
 }}
 .stat-value {{ font-size: 1.5rem; font-weight: 700; }}
 .stat-label {{ font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }}
-.stat-pass .stat-value {{ color: var(--green); }}
-.stat-fail .stat-value {{ color: var(--red); }}
-.stat-bug .stat-value {{ color: var(--yellow); }}
 
 /* Timeline */
 .timeline-section {{
@@ -376,6 +385,8 @@ body {{
 .timeline-bar .segment:hover {{ opacity: 0.8; }}
 .timeline-bar .segment.pass {{ background: var(--green); }}
 .timeline-bar .segment.fail {{ background: var(--red); }}
+.timeline-bar .segment.warn {{ background: var(--yellow); }}
+.timeline-bar .segment.info {{ background: var(--blue); }}
 .timeline-legend {{
   display: flex;
   gap: 16px;
@@ -393,6 +404,8 @@ body {{
 }}
 .timeline-legend .leg-pass::before {{ background: var(--green); }}
 .timeline-legend .leg-fail::before {{ background: var(--red); }}
+.timeline-legend .leg-warn::before {{ background: var(--yellow); }}
+.timeline-legend .leg-info::before {{ background: var(--blue); }}
 
 /* Bugs Section */
 .bugs-section {{
@@ -529,25 +542,29 @@ body {{
 """
 
     # --- Header ---
-    status_emoji = "✅" if result.success else "❌"
-    status_text = "Passed" if result.success else f"Failed: {result.error}"
+    if not result.success or bug_count > 0:
+        status_emoji = "❌"
+    else:
+        status_emoji = "✅"
+
+    # Build stats for each finding category that has findings
+    finding_stats = ""
+    for cat in ["bug", "ux-issue", "observation"]:
+        count = finding_counts.get(cat, 0)
+        if count > 0:
+            color = cat_colors[cat]
+            label = cat_labels[cat] + ("s" if count != 1 else "")
+            finding_stats += f"""
+    <div class="stat">
+      <div class="stat-value" style="color: {color};">{count}</div>
+      <div class="stat-label">{label}</div>
+    </div>"""
+
     html += f"""
 <div class="header">
   <h1>{status_emoji} {result.name}</h1>
   <div class="command">{result.command}</div>
-  <div class="stats">
-    <div class="stat stat-pass">
-      <div class="stat-value">{len(result.steps) - len(failed_steps)}</div>
-      <div class="stat-label">Passed</div>
-    </div>
-    <div class="stat stat-fail">
-      <div class="stat-value">{len(failed_steps)}</div>
-      <div class="stat-label">Failed</div>
-    </div>
-    <div class="stat stat-bug">
-      <div class="stat-value">{bug_count}</div>
-      <div class="stat-label">Bugs</div>
-    </div>
+  <div class="stats">{finding_stats}
     <div class="stat">
       <div class="stat-value">{total_time:.1f}s</div>
       <div class="stat-label">Duration</div>
@@ -564,13 +581,32 @@ body {{
 """
 
     # --- Timeline ---
+    # Build sets of step indices by finding category
+    finding_step_map = {}  # step_index -> worst category
+    cat_priority = {"bug": 2, "ux-issue": 1, "observation": 0}
+    step_indices = {s.step_index for s in result.steps}
+    for finding in result.findings:
+        idx = finding.step_index
+        if idx not in step_indices and result.steps:
+            idx = max((s.step_index for s in result.steps if s.step_index <= finding.step_index), default=result.steps[-1].step_index)
+        prev = finding_step_map.get(idx)
+        if prev is None or cat_priority.get(finding.category, 0) > cat_priority.get(prev, 0):
+            finding_step_map[idx] = finding.category
+
     html += '<div class="timeline-section"><h2>⏱ Timeline</h2>\n<div class="timeline-bar">\n'
     if total_time > 0:
         for step in result.steps:
             pct = max((step.elapsed_seconds / total_time) * 100, 0.5)
-            cls = "pass" if step.success else "fail"
+            finding_cat = finding_step_map.get(step.step_index)
+            if not step.success or finding_cat == "bug":
+                cls = "fail"
+            elif finding_cat == "ux-issue":
+                cls = "warn"
+            elif finding_cat == "observation":
+                cls = "info"
+            else:
+                cls = "pass"
             label = step.label or f"Step {step.step_index}"
-            # Truncate long labels for the bar
             short_label = label[:20] if len(label) > 20 else label
             html += (
                 f'  <div class="segment {cls}" style="width:{pct:.1f}%" '
@@ -581,43 +617,34 @@ body {{
     html += '</div>\n'
     html += '<div class="timeline-legend">'
     html += '<span class="leg-pass">Pass</span>'
-    html += '<span class="leg-fail">Fail</span>'
+    html += '<span class="leg-fail">Bug</span>'
+    html += '<span class="leg-warn">UX Issue</span>'
+    html += '<span class="leg-info">Observation</span>'
     html += f'<span>Total: {total_time:.1f}s</span>'
     html += '</div>\n</div>\n'
 
-    # --- Bugs Section ---
-    html += '<div class="bugs-section"><h2>🐛 Bugs &amp; Issues</h2>\n'
-    if result.bugs:
-        for bug in result.bugs:
-            sev_color = sev_colors.get(bug.severity, sev_colors["medium"])
+    # --- Findings Section ---
+    html += '<div class="bugs-section"><h2>📋 Findings</h2>\n'
+    if result.findings:
+        for finding in result.findings:
+            color = cat_colors.get(finding.category, cat_colors["observation"])
+            icon = cat_icons.get(finding.category, "📝")
+            label = cat_labels.get(finding.category, finding.category)
             html += f"""
-<div class="bug-card" style="border-left-color: {sev_color};">
+<div class="bug-card" style="border-left-color: {color};">
   <div class="bug-header">
-    <span class="bug-title">{bug.title}</span>
-    <span class="severity-badge" style="background: {sev_color};">{bug.severity}</span>
+    <span class="bug-title">{icon} {finding.title}</span>
+    <span class="severity-badge" style="background: {color};">{label}</span>
   </div>
-  <div class="bug-desc">{bug.description}</div>
-  <div class="bug-step">Step {bug.step_index}</div>
+  <div class="bug-desc">{finding.description}</div>
+  <div class="bug-step">Step {finding.step_index}</div>
 """
-            if bug.screenshot_path and os.path.exists(bug.screenshot_path):
-                bug_svg = Path(bug.screenshot_path).read_text()
-                html += f'  <div class="screenshot">{bug_svg}</div>\n'
+            if finding.screenshot_path and os.path.exists(finding.screenshot_path):
+                finding_svg = Path(finding.screenshot_path).read_text()
+                html += f'  <div class="screenshot">{finding_svg}</div>\n'
             html += '</div>\n'
-    elif failed_steps:
-        # Auto-generate bug entries from failed steps
-        for step in failed_steps:
-            html += f"""
-<div class="bug-card">
-  <div class="bug-header">
-    <span class="bug-title">Step {step.step_index} failed</span>
-    <span class="severity-badge" style="background: {sev_colors['high']};">high</span>
-  </div>
-  <div class="bug-desc">{step.error or 'Step did not complete successfully.'}</div>
-  <div class="bug-step">Action: {step.action}</div>
-</div>
-"""
     else:
-        html += '<div class="no-bugs">✅ No bugs found</div>\n'
+        html += '<div class="no-bugs">✅ No findings</div>\n'
     html += '</div>\n'
 
     # --- Steps ---

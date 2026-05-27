@@ -220,34 +220,34 @@ def screenshot(label: str = "", session_id: str = "default") -> str:
 
 
 @mcp.tool()
-def report_bug(
+def report_finding(
     title: str,
     description: str = "",
-    severity: str = "medium",
+    category: str = "bug",
     session_id: str = "default",
 ) -> str:
-    """Report a bug or issue found during the session.
+    """Report a finding during the session.
 
     Automatically captures a screenshot at the current terminal state.
-    Bugs are collected and displayed in the final HTML report.
+    Findings are collected and displayed in the final HTML report.
 
     Args:
-        title: Short summary of the bug (e.g. "Crash on empty input").
+        title: Short summary of the finding (e.g. "Crash on empty input").
         description: Longer explanation of what happened and expected behavior.
-        severity: One of "low", "medium", "high", "critical".
+        category: One of "bug", "ux-issue", "observation".
         session_id: Which session to report against.
 
     Returns:
         Confirmation with the screenshot path.
     """
     session = _get_session(session_id)
-    svg_path = session.report_bug(
+    svg_path = session.report_finding(
         title=title,
         description=description,
-        severity=severity,
+        category=category,
     )
-    bug_count = len(session.result.bugs)
-    return f"Bug #{bug_count} reported: {title} [{severity}]\nScreenshot: {svg_path}"
+    finding_count = len(session.result.findings)
+    return f"Finding #{finding_count} reported: {title} [{category}]\nScreenshot: {svg_path}"
 
 
 @mcp.tool()
