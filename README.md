@@ -23,11 +23,34 @@ Instead of writing rigid test scripts with exact keystrokes, you write **goal-ba
 
 ### 1. Install prerequisites
 
+<details>
+<summary><strong>macOS / Linux</strong></summary>
+
 ```bash
-brew install tmux          # terminal backend
+brew install tmux          # terminal backend (macOS)
+# or: sudo apt install tmux  (Debian/Ubuntu)
 ```
 
+</details>
+
+<details>
+<summary><strong>Windows</strong></summary>
+
+Install tmux via WSL (Windows Subsystem for Linux):
+
+```powershell
+wsl --install                # if WSL isn't set up yet
+wsl sudo apt install tmux
+```
+
+> **Note**: The MCP server uses tmux for terminal control, so on Windows it runs inside WSL.
+
+</details>
+
 ### 2. Clone and set up the venv
+
+<details>
+<summary><strong>macOS / Linux</strong></summary>
 
 ```bash
 git clone https://github.com/coreai-microsoft/cli-interactive-tester.git
@@ -39,9 +62,29 @@ uv pip install -e .
 
 > **Note**: If you don't have `uv`, use `python3.12 -m venv .venv && source .venv/bin/activate && pip install -e .`
 
+</details>
+
+<details>
+<summary><strong>Windows (PowerShell)</strong></summary>
+
+```powershell
+git clone https://github.com/coreai-microsoft/cli-interactive-tester.git
+cd cli-interactive-tester
+uv venv .venv --python 3.12
+.venv\Scripts\Activate.ps1
+uv pip install -e .
+```
+
+> **Note**: If you don't have `uv`, use `python -m venv .venv && .venv\Scripts\Activate.ps1 && pip install -e .`
+
+</details>
+
 ### 3. Register the MCP server with Copilot CLI
 
 Add this entry to your Copilot CLI MCP config at **`~/.copilot/mcp-config.json`** (create the file if it doesn't exist):
+
+<details>
+<summary><strong>macOS / Linux</strong></summary>
 
 ```json
 {
@@ -56,9 +99,31 @@ Add this entry to your Copilot CLI MCP config at **`~/.copilot/mcp-config.json`*
 }
 ```
 
-Replace `<FULL-PATH-TO-REPO>` with the absolute path where you cloned the repo (e.g., `/Users/you/working/cli-interactive-tester`).
+Example path: `/Users/you/working/cli-interactive-tester`
 
-> **Important**: Use the full path to the **venv Python** (`<repo>/.venv/bin/python`), not a system Python. This ensures the MCP and other dependencies are available.
+</details>
+
+<details>
+<summary><strong>Windows</strong></summary>
+
+```json
+{
+  "mcpServers": {
+    "cli-interactive-tester": {
+      "type": "stdio",
+      "command": "<FULL-PATH-TO-REPO>\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "auto_test_tool.mcp_server"],
+      "cwd": "<FULL-PATH-TO-REPO>"
+    }
+  }
+}
+```
+
+Example path: `C:\\Users\\you\\working\\cli-interactive-tester`
+
+</details>
+
+> **Important**: Use the full path to the **venv Python**, not a system Python. This ensures the MCP and other dependencies are available.
 
 ### 4. Run a scenario
 
