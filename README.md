@@ -1,16 +1,16 @@
-# azd-test-tool
+# cli-interactive-tester
 
-MCP server for Copilot CLI-driven testing of interactive CLI flows.
+MCP server for Copilot CLI-driven testing of **any** interactive CLI flow.
 
 Instead of writing rigid test scripts with exact keystrokes, you write **goal-based scenarios** and let Copilot CLI figure out how to drive the terminal — just like Playwright MCP for browsers.
 
 ## How it works
 
 ```
-┌─────────────┐     MCP (stdio)     ┌──────────────────┐     tmux     ┌─────────┐
-│ Copilot CLI  │ ◄─────────────────► │  MCP Server      │ ◄──────────► │  CLI    │
-│ (reads YAML) │   tools/resources   │  (auto_test_tool) │  send-keys   │  (azd)  │
-└─────────────┘                      └──────────────────┘  capture-pane └─────────┘
+┌─────────────┐     MCP (stdio)     ┌──────────────────┐     tmux     ┌──────────┐
+│ Copilot CLI  │ ◄─────────────────► │  MCP Server      │ ◄──────────► │ Any CLI  │
+│ (reads YAML) │   tools/resources   │  (auto_test_tool) │  send-keys   │ (interactive)
+└─────────────┘                      └──────────────────┘  capture-pane └──────────┘
 ```
 
 1. **MCP server** exposes terminal control tools over stdio
@@ -30,8 +30,8 @@ brew install tmux          # terminal backend
 ### 2. Clone and set up the venv
 
 ```bash
-git clone <this-repo>
-cd azd-test-tool
+git clone https://github.com/coreai-microsoft/cli-interactive-tester.git
+cd cli-interactive-tester
 uv venv .venv --python 3.12
 source .venv/bin/activate
 uv pip install -e .
@@ -46,7 +46,7 @@ Add this entry to your Copilot CLI MCP config at **`~/.copilot/mcp-config.json`*
 ```json
 {
   "mcpServers": {
-    "azd-test-tool": {
+    "cli-interactive-tester": {
       "type": "stdio",
       "command": "<FULL-PATH-TO-REPO>/.venv/bin/python",
       "args": ["-m", "auto_test_tool.mcp_server"],
@@ -56,7 +56,7 @@ Add this entry to your Copilot CLI MCP config at **`~/.copilot/mcp-config.json`*
 }
 ```
 
-Replace `<FULL-PATH-TO-REPO>` with the absolute path where you cloned the repo (e.g., `/Users/you/working/azd-test-tool`).
+Replace `<FULL-PATH-TO-REPO>` with the absolute path where you cloned the repo (e.g., `/Users/you/working/cli-interactive-tester`).
 
 > **Important**: Use the full path to the **venv Python** (`<repo>/.venv/bin/python`), not a system Python. This ensures the MCP and other dependencies are available.
 
@@ -65,18 +65,11 @@ Replace `<FULL-PATH-TO-REPO>` with the absolute path where you cloned the repo (
 Open a **new** Copilot CLI session (so it picks up the config) and say:
 
 ```
-Use the azd-test-tool to load the scenario at scenarios/smoke-test.yaml,
+Use the cli-interactive-tester to load the scenario at scenarios/smoke-test.yaml,
 then start the session and accomplish the goals. Take screenshots at each step.
 ```
 
 That's it. Copilot CLI will use `load_scenario` to read the goals, then call `start_session`, `observe`, `send_action`, and `finish_session` to drive the CLI.
-
-### 5. Run a real test
-
-```
-Use the azd-test-tool to load the scenario at scenarios/init-template-python.yaml
-and drive the azd ai agent init session. Take screenshots at each step and generate a report.
-```
 
 ## Writing Scenarios
 
@@ -87,16 +80,14 @@ Scenarios are YAML files. You provide the command to run and **goals** describin
 Best when you need a specific sequence:
 
 ```yaml
-name: "init-template-python"
-command: "azd ai agent init"
-cwd: "~/working/agents/test"
-env:
-  AZD_DISABLE_AGENT_DETECT: "1"
+name: "npm-init"
+command: "npm init"
+cwd: "~/working/my-project"
 goals:
-  - "Select 'Start new from a template' when asked how to initialize"
-  - "Choose Python as the language"
-  - "Pick the first starter template"
-  - "Wait for init to complete (look for 'Next:' in output)"
+  - "Enter 'my-app' as the package name"
+  - "Accept the default version"
+  - "Enter 'A sample application' as the description"
+  - "Wait for package.json to be created"
 ```
 
 ### Free-text goal
@@ -104,14 +95,14 @@ goals:
 Best for exploratory or flexible flows:
 
 ```yaml
-name: "init-from-code"
-command: "azd ai agent init"
-cwd: "~/working/agents/existing-project"
+name: "interactive-setup"
+command: "python setup_wizard.py"
+cwd: "~/working/my-project"
 goal: |
-  Initialize from existing agent source code.
-  Confirm reuse of the existing manifest.
-  Accept defaults for all prompts.
-  Wait for "Next:" completion message.
+  Complete the interactive setup wizard.
+  Select the recommended defaults for all prompts.
+  When asked for a project name, enter "demo".
+  Wait for the "Setup complete" message.
 ```
 
 ### Scenario fields
