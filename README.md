@@ -1,130 +1,129 @@
-# azd auto-test-tool
+# azd-test-tool
 
-Automated testing tool for interactive CLI flows like `azd ai agent init`.
+MCP server for Copilot CLI-driven testing of interactive CLI flows.
+
+Instead of writing rigid test scripts with exact keystrokes, you write **goal-based scenarios** and let Copilot CLI figure out how to drive the terminal — just like Playwright MCP for browsers.
 
 ## How it works
 
-1. **tmux** runs the CLI command in a detached terminal session with controlled dimensions
-2. **pexpect-style polling** waits for prompt text to appear
-3. **Keystrokes** are sent via `tmux send-keys` (arrow keys, enter, text input)
-4. **Screenshots** are captured via `tmux capture-pane -p -e` (ANSI text) → rendered to SVG using Rich
-5. **HTML report** is generated with embedded SVG screenshots at each step
+1. **MCP server** exposes terminal control tools over stdio
+2. **Copilot CLI** reads a scenario file with high-level goals
+3. **tmux** runs the CLI command in a detached terminal session
+4. Copilot CLI **observes** the terminal state and **decides** what actions to take
+5. **Screenshots** (SVG) and an **HTML report** are generated automatically
 
 ## Prerequisites
 
 ```bash
 brew install tmux
-pip install -e .
+uv pip install -e .
+# or: pip install -e .
 ```
 
-## Usage
+## MCP Configuration
+
+Add to your MCP config (e.g., `~/.config/github-copilot/mcp.json`):
+
+```json
+{
+  "servers": {
+    "azd-test-tool": {
+      "command": "python",
+      "args": ["-m", "auto_test_tool.mcp_server"],
+      "cwd": "/path/to/azd-test-tool"
+    }
+  }
+}
+```
+
+Or run directly:
 
 ```bash
-# Run a single scenario
-azd-auto-test scenarios/init-template-python.yaml
-
-# Run all scenarios in a directory
-azd-auto-test scenarios/
-
-# Custom output directory
-azd-auto-test scenarios/init-template-python.yaml -o ~/Desktop/test-results
+azd-test-mcp
 ```
 
-## Writing scenarios
+## Writing Scenarios
 
-Scenarios are YAML files with this structure:
+Scenarios are YAML files with goals instead of rigid steps.
+
+### Structured goals (list of steps):
 
 ```yaml
-name: "my-test"
+name: "init-template-python"
 command: "azd ai agent init"
-cwd: "~/working/agents/test-dir"
-step_timeout: 30  # seconds per step
+cwd: "~/working/agents/test"
 env:
   AZD_DISABLE_AGENT_DETECT: "1"
-steps:
-  - expect: "text to wait for"
-    action: select          # select | confirm | input | multi_select | wait
-    choice: "option text"   # for select: match by text
-    choice_index: 0         # for select: match by position
-    value: true             # for confirm: true/false
-    text: "my input"        # for input: text to type
-    toggle_indices: [0, 2]  # for multi_select: items to toggle
-    screenshot: true        # capture before action (default: true)
-    delay_after: 0.5        # seconds to wait after action
+goals:
+  - "Select 'Start new from a template' when asked how to initialize"
+  - "Choose Python as the language"
+  - "Pick the first starter template"
+  - "Wait for init to complete (look for 'Next:' in output)"
 ```
 
-### Action types
+### Free-text goal:
 
-| Action | Description | Key fields |
-|--------|------------|------------|
-| `select` | Arrow-key navigation + Enter | `choice` or `choice_index` |
-| `confirm` | Y/N + Enter | `value` (bool) |
-| `input` | Type text + Enter | `text` |
-| `multi_select` | Space to toggle + Enter | `toggle_indices` |
-| `wait` | Just wait, no keystroke | — |
+```yaml
+name: "init-from-code"
+command: "azd ai agent init"
+cwd: "~/working/agents/existing-project"
+goal: |
+  Initialize from existing agent source code.
+  Confirm reuse of the existing manifest.
+  Accept defaults for all prompts.
+  Wait for "Next:" completion message.
+```
+
+## MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `start_session` | Launch a command in tmux. Returns initial terminal state. |
+| `observe` | Read current terminal text. |
+| `send_action` | Send an action: `select`, `confirm`, `input`, `multi_select`, `wait`. |
+| `screenshot` | Capture terminal → SVG file. |
+| `finish_session` | Kill session, generate HTML report. |
+
+### Action types for `send_action`
+
+| Action | Parameters | Description |
+|--------|-----------|-------------|
+| `select` | `choice_index` or `choice_text` | Pick from a list |
+| `confirm` | `value` (bool) | Answer yes/no |
+| `input` | `text` | Type into a text field |
+| `multi_select` | `toggle_indices` (list) | Toggle items in a checklist |
+| `wait` | `seconds` | Pause without sending keys |
+
+## MCP Resources
+
+| Resource | Description |
+|----------|-------------|
+| `scenario://{path}` | Read a scenario YAML and return structured goals |
 
 ## Output
 
-Each run creates a timestamped directory under `screenshots/`:
+Each session generates a timestamped directory:
 
 ```
 screenshots/
-  init-from-template-python_20240101_120000/
-    step_000.svg      # Terminal screenshot at step 0
+  agent_20240101_120000/
+    step_000.svg      # Terminal screenshot
     step_000.txt      # Plain text capture
-    step_001.svg
-    step_001.txt
     final.svg         # Final terminal state
     result.json       # Structured results
     report.html       # HTML report with embedded screenshots
 ```
 
-Open `report.html` in a browser to review the test run.
+## Usage with Copilot CLI
 
-## Agent-driven exploration (Copilot CLI)
+Ask Copilot CLI to run a scenario:
 
-The agent mode lets **Copilot CLI** (or any external agent) drive the
-interactive CLI. No API keys needed — you are the agent.
+> "Read the scenario at scenarios/init-template-python.yaml and drive the CLI session to accomplish those goals. Take screenshots at each step."
 
-### How it works
-
-`azd-auto-agent` uses a JSON-over-stdio protocol:
-1. It starts the command in tmux and prints the terminal state as JSON to stdout
-2. You (Copilot CLI) read the state, decide what to do, and send a JSON action to stdin
-3. The tool executes the action, captures a screenshot, prints the new state
-4. Repeat until you send `{"action": "done"}`
-
-### Usage from Copilot CLI
-
-```bash
-# Start an agent session — Copilot CLI drives it interactively
-azd-auto-agent "azd ai agent init" -d ~/working/agents/test -o screenshots
-```
-
-The tool prints JSON lines. Send JSON actions:
-
-```json
-{"action": "select", "choice_index": 1}
-{"action": "select_by_text", "text": "Python"}
-{"action": "confirm", "value": true}
-{"action": "input", "text": "my-agent"}
-{"action": "multi_select", "toggle_indices": [0, 2]}
-{"action": "wait", "seconds": 3}
-{"action": "done", "summary": "Explored template init flow"}
-```
-
-### Python API
-
-```python
-from auto_test_tool.agent import AgentSession
-
-session = AgentSession("azd ai agent init", cwd="~/agents/test")
-state = session.start()   # returns terminal text
-
-# Drive the session
-state = session.act({"action": "select", "choice_index": 0})
-state = session.act({"action": "select_by_text", "text": "Python"})
-# ...
-
-report = session.finish()  # generates HTML report
-```
+Copilot CLI will:
+1. Read the scenario via the `scenario://` resource
+2. Call `start_session` with the command and working directory
+3. Call `observe` to see the terminal
+4. Call `send_action` to interact with each prompt
+5. Call `screenshot` to capture key moments
+6. Call `finish_session` to generate the report

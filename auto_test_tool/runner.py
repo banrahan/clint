@@ -7,18 +7,15 @@ Captures screenshots via `tmux capture-pane` + Rich SVG rendering.
 Test flows are defined in YAML scenario files.
 """
 
-import argparse
 import json
 import os
 import re
 import subprocess
-import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-import yaml
 from rich.console import Console
 from rich.text import Text
 
@@ -225,147 +222,6 @@ def execute_action(session: str, step: dict) -> None:
         raise ValueError(f"Unknown action: {action}")
 
 
-def run_scenario(scenario_path: str, output_dir: str) -> ScenarioResult:
-    """Run a single test scenario from a YAML file."""
-    with open(scenario_path) as f:
-        scenario = yaml.safe_load(f)
-
-    name = scenario["name"]
-    command = scenario["command"]
-    cwd = scenario.get("cwd", ".")
-    env = scenario.get("env", {})
-    steps = scenario.get("steps", [])
-    step_timeout = scenario.get("step_timeout", 30)
-
-    # Ensure output directory exists
-    run_dir = os.path.join(output_dir, f"{name}_{datetime.now():%Y%m%d_%H%M%S}")
-    os.makedirs(run_dir, exist_ok=True)
-
-    result = ScenarioResult(
-        name=name,
-        command=command,
-        start_time=datetime.now().isoformat(),
-    )
-
-    session = tmux_session_name()
-
-    try:
-        # Ensure cwd exists
-        cwd_expanded = os.path.expanduser(cwd)
-        os.makedirs(cwd_expanded, exist_ok=True)
-
-        # Create tmux session
-        tmux_create_session(session, command, cwd, env)
-        # Give the command a moment to start
-        time.sleep(1)
-
-        for i, step in enumerate(steps):
-            step_result = StepResult(
-                step_index=i,
-                expect_pattern=step.get("expect", ""),
-                action=step.get("action", "wait"),
-            )
-            start = time.time()
-
-            try:
-                # Wait for the expected prompt text
-                if step_result.expect_pattern:
-                    found, capture = wait_for_text(
-                        session, step_result.expect_pattern, timeout=step_timeout
-                    )
-                    step_result.matched_text = capture
-                    if not found:
-                        step_result.success = False
-                        step_result.error = (
-                            f"Timeout waiting for: {step_result.expect_pattern}"
-                        )
-                        result.steps.append(step_result)
-                        result.success = False
-                        result.error = step_result.error
-                        break
-
-                # Capture screenshot before action
-                if step.get("screenshot", True):
-                    ansi_capture = tmux_capture_pane(session, with_ansi=True)
-                    step_result.ansi_capture = ansi_capture
-
-                    svg_file = os.path.join(run_dir, f"step_{i:03d}.svg")
-                    render_ansi_to_svg(
-                        ansi_capture, svg_file,
-                        title=f"Step {i}: {step_result.expect_pattern[:60]}",
-                    )
-                    step_result.svg_path = svg_file
-
-                    txt_file = os.path.join(run_dir, f"step_{i:03d}.txt")
-                    save_text_capture(ansi_capture, txt_file)
-                    step_result.text_path = txt_file
-
-                # Execute the action
-                execute_action(session, step)
-
-                # Small delay after action for the UI to update
-                time.sleep(step.get("delay_after", 0.5))
-
-            except Exception as e:
-                step_result.success = False
-                step_result.error = str(e)
-                result.success = False
-                result.error = str(e)
-
-            step_result.elapsed_seconds = time.time() - start
-            result.steps.append(step_result)
-
-            if not step_result.success:
-                break
-
-        # Final capture after all steps
-        time.sleep(1)
-        final_capture = tmux_capture_pane(session, with_ansi=True)
-        final_svg = os.path.join(run_dir, "final.svg")
-        render_ansi_to_svg(final_capture, final_svg, title="Final State")
-        final_txt = os.path.join(run_dir, "final.txt")
-        save_text_capture(final_capture, final_txt)
-
-    finally:
-        tmux_kill_session(session)
-
-    result.end_time = datetime.now().isoformat()
-
-    # Save result JSON
-    result_json = os.path.join(run_dir, "result.json")
-    with open(result_json, "w") as f:
-        json.dump(
-            {
-                "name": result.name,
-                "command": result.command,
-                "start_time": result.start_time,
-                "end_time": result.end_time,
-                "success": result.success,
-                "error": result.error,
-                "steps": [
-                    {
-                        "step_index": s.step_index,
-                        "expect_pattern": s.expect_pattern,
-                        "action": s.action,
-                        "success": s.success,
-                        "error": s.error,
-                        "elapsed_seconds": round(s.elapsed_seconds, 2),
-                        "svg_path": os.path.basename(s.svg_path) if s.svg_path else "",
-                        "text_path": os.path.basename(s.text_path) if s.text_path else "",
-                    }
-                    for s in result.steps
-                ],
-            },
-            f,
-            indent=2,
-        )
-
-    # Generate HTML report
-    generate_html_report(run_dir, result)
-
-    return result
-
-
 def generate_html_report(run_dir: str, result: ScenarioResult) -> None:
     """Generate an HTML report with embedded SVG screenshots."""
     html_parts = [
@@ -427,54 +283,3 @@ def generate_html_report(run_dir: str, result: ScenarioResult) -> None:
     print(f"📄 Report: {report_path}")
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Automated test runner for interactive CLI tools"
-    )
-    parser.add_argument(
-        "scenario",
-        help="Path to a YAML scenario file or directory of scenarios",
-    )
-    parser.add_argument(
-        "-o", "--output",
-        default="screenshots",
-        help="Output directory for screenshots and reports (default: screenshots/)",
-    )
-    args = parser.parse_args()
-
-    if not tmux_is_installed():
-        print("❌ tmux is required. Install with: brew install tmux", file=sys.stderr)
-        sys.exit(1)
-
-    scenario_path = Path(args.scenario)
-    output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    if scenario_path.is_dir():
-        scenarios = sorted(scenario_path.glob("*.yaml"))
-    else:
-        scenarios = [scenario_path]
-
-    if not scenarios:
-        print(f"❌ No scenario files found at: {scenario_path}", file=sys.stderr)
-        sys.exit(1)
-
-    results = []
-    for scenario_file in scenarios:
-        print(f"\n🚀 Running scenario: {scenario_file.name}")
-        result = run_scenario(str(scenario_file), str(output_dir))
-        results.append(result)
-        status = "✅ PASS" if result.success else "❌ FAIL"
-        print(f"   {status}: {result.name}")
-        if result.error:
-            print(f"   Error: {result.error}")
-
-    # Summary
-    passed = sum(1 for r in results if r.success)
-    total = len(results)
-    print(f"\n{'=' * 40}")
-    print(f"Results: {passed}/{total} passed")
-
-
-if __name__ == "__main__":
-    main()

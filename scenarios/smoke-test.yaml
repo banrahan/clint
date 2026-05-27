@@ -1,13 +1,8 @@
 name: "smoke-test"
 command: "echo 'Hello from auto-test-tool' && sleep 1 && echo 'Done'"
 cwd: "/tmp"
-step_timeout: 10
-env: {}
-steps:
-  - expect: "Hello from auto-test-tool"
-    action: wait
-    screenshot: true
-    delay_after: 2
-  - expect: "Done"
-    action: wait
-    screenshot: true
+
+goals:
+  - "Wait for 'Hello from auto-test-tool' to appear"
+  - "Wait for 'Done' to appear"
+  - "Take a screenshot of the final state"

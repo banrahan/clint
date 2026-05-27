@@ -1,39 +1,13 @@
 # Scenario: Init from template → Python → first starter template
-# This exercises the most common azd ai agent init flow.
 name: "init-from-template-python"
 command: "azd ai agent init"
 cwd: "~/working/agents/auto-test-temp"
-step_timeout: 60
 
-# Environment variables to set for the test
 env:
   AZD_DISABLE_AGENT_DETECT: "1"
-  NO_COLOR: "1"
 
-steps:
-  # Step 0: Wait for init mode prompt
-  - expect: "How do you want to initialize"
-    action: select
-    choice: "Start new from a template"
-    screenshot: true
-    delay_after: 1
-
-  # Step 1: Language selection
-  - expect: "Select a language"
-    action: select
-    choice: "Python"
-    screenshot: true
-    delay_after: 1
-
-  # Step 2: Template selection — pick the first starter template
-  - expect: "Select a"
-    action: select
-    choice_index: 0
-    screenshot: true
-    delay_after: 2
-
-  # Step 3: Wait for and capture the final output
-  - expect: "Next:"
-    action: wait
-    screenshot: true
-    delay_after: 1
+goals:
+  - "When asked how to initialize, select 'Start new from a template'"
+  - "Select Python as the language"
+  - "Pick the first starter template in the list"
+  - "Wait for init to complete — look for 'Next:' in the output"

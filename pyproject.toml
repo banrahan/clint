@@ -1,17 +1,16 @@
 [project]
 name = "auto-test-tool"
-version = "0.1.0"
-description = "Automated testing tool for azd ai agent init interactive flows"
+version = "0.2.0"
+description = "MCP server for Copilot CLI-driven testing of interactive CLI flows"
 requires-python = ">=3.10"
 dependencies = [
-    "pexpect>=4.9",
+    "mcp>=1.0",
     "pyyaml>=6.0",
     "rich>=13.0",
 ]
 
 [project.scripts]
-azd-auto-test = "auto_test_tool.runner:main"
-azd-auto-agent = "auto_test_tool.agent:main"
+azd-test-mcp = "auto_test_tool.mcp_server:main"
 
 [tool.setuptools.packages.find]
 include = ["auto_test_tool*"]

@@ -3,24 +3,23 @@
 Agent-driven exploration mode for interactive CLI tools.
 
 This module provides a tmux-backed terminal session that an external agent
-(such as Copilot CLI) can drive interactively. The agent observes terminal
-screenshots and sends actions.
+(such as Copilot CLI via MCP) can drive interactively. The agent observes
+terminal state and sends actions.
 
-Two modes:
-  1. Interactive CLI: prints terminal state as JSON to stdout, reads JSON
-     actions from stdin. Designed to be driven by Copilot CLI.
-  2. Programmatic: import AgentSession and call start/observe/act/finish.
+Usage:
+    from auto_test_tool.agent import AgentSession
 
-No API keys required — the calling agent (you, Copilot CLI) makes the decisions.
+    session = AgentSession("azd ai agent init", cwd="~/agents/test")
+    session.start()
+    state = session.observe()
+    state = session.act({"action": "select", "choice_index": 0})
+    report = session.finish()
 """
 
-import argparse
 import json
 import os
-import sys
 import time
 from datetime import datetime
-from pathlib import Path
 
 from .runner import (
     generate_html_report,
@@ -28,7 +27,6 @@ from .runner import (
     save_text_capture,
     tmux_capture_pane,
     tmux_create_session,
-    tmux_is_installed,
     tmux_kill_session,
     tmux_send_keys,
     tmux_send_text,
@@ -37,8 +35,6 @@ from .runner import (
     StepResult,
     ANSI_RE,
 )
-
-MAX_AGENT_STEPS = 30
 ACTION_SETTLE_DELAY = 2.0
 POLL_INTERVAL = 0.5
 PRE_ACTION_DELAY = 1.0  # wait for prompt widget to fully initialize
@@ -264,129 +260,3 @@ class AgentSession:
 
         generate_html_report(self.run_dir, self.result)
         return os.path.join(self.run_dir, "report.html")
-
-
-def main():
-    """
-    Interactive agent mode — reads JSON actions from stdin, prints terminal
-    state to stdout. Designed to be driven by Copilot CLI or any external agent.
-
-    Protocol:
-      1. Tool prints terminal state as a JSON line to stdout
-      2. Agent sends a JSON action line to stdin
-      3. Tool executes action, prints new state
-      4. Repeat until {"action": "done"} is received
-    """
-    parser = argparse.ArgumentParser(
-        description="Agent-driven exploration of interactive CLI tools (driven by Copilot CLI)"
-    )
-    parser.add_argument(
-        "command",
-        help="The CLI command to run (e.g., 'azd ai agent init')",
-    )
-    parser.add_argument(
-        "-d", "--cwd",
-        default=".",
-        help="Working directory to run the command in",
-    )
-    parser.add_argument(
-        "-o", "--output",
-        default="screenshots",
-        help="Output directory for screenshots and reports",
-    )
-    parser.add_argument(
-        "--env",
-        nargs="*",
-        default=[],
-        help="Extra env vars as KEY=VALUE pairs",
-    )
-    args = parser.parse_args()
-
-    if not tmux_is_installed():
-        print("❌ tmux is required. Install with: brew install tmux", file=sys.stderr)
-        sys.exit(1)
-
-    env = {}
-    for kv in args.env:
-        if "=" in kv:
-            k, v = kv.split("=", 1)
-            env[k] = v
-
-    output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    session = AgentSession(
-        command=args.command,
-        cwd=args.cwd,
-        env=env,
-        output_dir=str(output_dir),
-    )
-
-    initial_state = session.start()
-    print(json.dumps({
-        "type": "state",
-        "step": 0,
-        "terminal": initial_state,
-        "message": "Session started. Send a JSON action to proceed.",
-        "actions_help": {
-            "select": {"choice_index": "int (0-indexed)"},
-            "select_by_text": {"text": "string to match"},
-            "confirm": {"value": "true/false"},
-            "input": {"text": "string to type"},
-            "multi_select": {"toggle_indices": "[int, ...]"},
-            "wait": {"seconds": "int"},
-            "done": {"summary": "string"},
-        },
-    }))
-    sys.stdout.flush()
-
-    try:
-        for line in sys.stdin:
-            line = line.strip()
-            if not line:
-                continue
-
-            try:
-                action = json.loads(line)
-            except json.JSONDecodeError as e:
-                print(json.dumps({"type": "error", "message": f"Invalid JSON: {e}"}))
-                sys.stdout.flush()
-                continue
-
-            new_state = session.act(action)
-
-            if session.is_done:
-                report_path = session.finish()
-                print(json.dumps({
-                    "type": "done",
-                    "report": report_path,
-                    "summary": action.get("summary", "Agent completed"),
-                }))
-                sys.stdout.flush()
-                break
-
-            svg_path = session.result.steps[-1].svg_path if session.result.steps else ""
-            print(json.dumps({
-                "type": "state",
-                "step": session.step_index,
-                "terminal": new_state,
-                "screenshot": svg_path,
-            }))
-            sys.stdout.flush()
-
-    except KeyboardInterrupt:
-        report_path = session.finish()
-        print(json.dumps({
-            "type": "done",
-            "report": report_path,
-            "summary": "Interrupted by user",
-        }))
-
-    except Exception as e:
-        session.finish()
-        print(json.dumps({"type": "error", "message": str(e)}), file=sys.stderr)
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()

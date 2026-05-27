@@ -3,29 +3,12 @@
 name: "init-from-code"
 command: "azd ai agent init"
 cwd: "~/working/agents/auto-test-from-code"
-step_timeout: 60
 
 env:
   AZD_DISABLE_AGENT_DETECT: "1"
-  NO_COLOR: "1"
 
-steps:
-  # Step 0: Existing manifest detection — confirm reuse
-  - expect: "existing agent"
-    action: confirm
-    value: true
-    screenshot: true
-    delay_after: 2
-
-  # Step 1: Subscription selection (if prompted)
-  - expect: "Select an Azure"
-    action: select
-    choice_index: 0
-    screenshot: true
-    delay_after: 2
-
-  # Step 2: Wait for completion
-  - expect: "Next:"
-    action: wait
-    screenshot: true
-    delay_after: 1
+goal: |
+  Initialize from existing agent source code in the current directory.
+  When the tool detects an existing agent manifest, confirm that you want to reuse it.
+  If prompted to select an Azure subscription, pick the first one.
+  Wait for init to complete — look for "Next:" in the output.

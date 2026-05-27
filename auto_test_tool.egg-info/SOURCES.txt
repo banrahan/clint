@@ -2,6 +2,7 @@ README.md
 pyproject.toml
 auto_test_tool/__init__.py
 auto_test_tool/agent.py
+auto_test_tool/mcp_server.py
 auto_test_tool/runner.py
 auto_test_tool.egg-info/PKG-INFO
 auto_test_tool.egg-info/SOURCES.txt

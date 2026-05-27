@@ -1,3 +1,2 @@
 [console_scripts]
-azd-auto-agent = auto_test_tool.agent:main
-azd-auto-test = auto_test_tool.runner:main
+azd-test-mcp = auto_test_tool.mcp_server:main
