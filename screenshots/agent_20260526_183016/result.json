@@ -1,0 +1,9 @@
+{
+  "name": "Agent session: azd ai agent init",
+  "command": "azd ai agent init",
+  "start_time": "2026-05-26T18:30:16.633119",
+  "end_time": "2026-05-26T18:34:06.949278",
+  "success": true,
+  "error": "",
+  "total_steps": 13
+}

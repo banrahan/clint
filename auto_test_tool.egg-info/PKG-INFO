@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: auto-test-tool
+Version: 0.1.0
+Summary: Automated testing tool for azd ai agent init interactive flows
+Requires-Python: >=3.10
+Requires-Dist: pexpect>=4.9
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: rich>=13.0
