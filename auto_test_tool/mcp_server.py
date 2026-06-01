@@ -66,19 +66,22 @@ def _get_session(session_id: str) -> AgentSession:
 @mcp.tool()
 def start_session(
     command: str,
-    cwd: str = ".",
+    cwd: str | None = None,
     session_id: str = "default",
     env: dict[str, str] | None = None,
-    output_dir: str = "screenshots",
+    output_dir: str = "reports",
+    run_name: str | None = None,
 ) -> str:
     """Start an interactive CLI command in a tmux terminal session.
 
     Args:
         command: The CLI command to run (e.g. "azd ai agent init").
         cwd: Working directory. Supports ~ expansion. Created if it doesn't exist.
+             If not provided, a temp directory under /tmp is created automatically.
         session_id: Identifier for this session (allows multiple concurrent sessions).
         env: Extra environment variables to set.
         output_dir: Where to store screenshots and the final HTML report.
+        run_name: Name for the run folder (e.g. scenario name). Defaults to a timestamp.
 
     Returns:
         The initial terminal text after the command starts.
@@ -94,6 +97,7 @@ def start_session(
         cwd=cwd,
         env=env or {},
         output_dir=output_dir,
+        run_name=run_name,
     )
     initial_state = session.start()
     _sessions[session_id] = session

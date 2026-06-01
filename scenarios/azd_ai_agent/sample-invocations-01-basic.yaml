@@ -1,0 +1,24 @@
+# Scenario: invocations/01-basic sample README walkthrough
+#
+# Follow the README as a new user, reporting any confusing UX or dead ends:
+#   ~/working/foundry-samples-pr/samples/python/hosted-agents/agent-framework/invocations/01-basic/README.md
+#
+# NOTE: The GitHub manifest URL doesn't exist yet (PR in progress).
+# Use local path: ~/working/foundry-samples-pr/samples/python/hosted-agents/agent-framework/invocations/01-basic/agent.manifest.yaml
+
+name: "sample-invocations-01-basic"
+command: "azd ai agent init -m ~/working/foundry-samples-pr/samples/python/hosted-agents/agent-framework/invocations/01-basic/agent.manifest.yaml"
+cwd: "~/working/agents-invocations-basic"
+
+env:
+  AZD_DISABLE_AGENT_DETECT: "1"
+
+notes: |
+  This is an Invocations protocol agent (not Responses). The invoke payload uses JSON:
+    azd ai agent invoke --local '{"message": "Hi"}'
+  'azd ai agent run' blocks the terminal. Use start_session with different session_id values
+  to manage both run and invoke sessions.
+
+goals:
+  - "Follow the invocations/01-basic README end-to-end. Use the 'benhanrahan' subscription and 'East US 2' region. Report any confusing prompts, doc mismatches, or dead ends along the way."
+  - "Clean up all Azure resources when done (azd down --force --purge)."

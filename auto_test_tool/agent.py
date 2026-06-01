@@ -18,6 +18,8 @@ Usage:
 
 import json
 import os
+import shutil
+import tempfile
 import time
 from datetime import datetime
 
@@ -127,12 +129,12 @@ class AgentSession:
     def __init__(
         self,
         command: str,
-        cwd: str = ".",
+        cwd: str | None = None,
         env: dict[str, str] | None = None,
-        output_dir: str = "screenshots",
+        output_dir: str = "reports",
+        run_name: str | None = None,
     ):
         self.command = command
-        self.cwd = cwd
         self.env = env or {}
         self.env.setdefault("AZD_DISABLE_AGENT_DETECT", "1")
         self.env.setdefault("FORCE_COLOR", "1")
@@ -142,7 +144,16 @@ class AgentSession:
         self.step_index = 0
         self.prev_capture = ""
 
-        run_name = f"agent_{datetime.now():%Y%m%d_%H%M%S}"
+        # Use a temp directory under /tmp when no cwd is specified
+        if cwd is None:
+            self._tmp_cwd = tempfile.mkdtemp(prefix="cli-test-")
+            self.cwd = self._tmp_cwd
+        else:
+            self._tmp_cwd = None
+            self.cwd = cwd
+
+        if run_name is None:
+            run_name = f"agent_{datetime.now():%Y%m%d_%H%M%S}"
         self.run_dir = os.path.join(output_dir, run_name)
 
         self.result = ScenarioResult(
@@ -332,4 +343,9 @@ class AgentSession:
             )
 
         generate_html_report(self.run_dir, self.result)
+
+        # Clean up auto-created temp working directory
+        if self._tmp_cwd and os.path.isdir(self._tmp_cwd):
+            shutil.rmtree(self._tmp_cwd, ignore_errors=True)
+
         return os.path.join(self.run_dir, "report.html")

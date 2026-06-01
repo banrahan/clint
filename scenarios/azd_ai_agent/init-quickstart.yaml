@@ -1,0 +1,21 @@
+# Scenario: Hosted Agent Quickstart
+#
+# Follow the quickstart as a new user, reporting any confusing UX or dead ends:
+#   https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?pivots=azd
+
+name: "quickstart-hosted-agent"
+command: "azd ai agent init"
+cwd: "~/working/agents/quickstart-test"
+
+env:
+  AZD_DISABLE_AGENT_DETECT: "1"
+
+notes: |
+  'azd ai agent run' blocks the terminal. To test locally you need two
+  sessions: one running the agent and a second to run
+  'azd ai agent invoke --local'. Use start_session with different
+  session_id values to manage both.
+
+goals:
+  - "Follow the quickstart end-to-end. Use the 'benhanrahan' subscription and 'East US 2' region. Report any confusing prompts, doc mismatches, or dead ends along the way."
+  - "Clean up all Azure resources when done (azd down --force --purge)."

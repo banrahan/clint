@@ -1,0 +1,128 @@
+# Scenario: Reproduce azure-dev#8360 — 404 when recreating same project in same path
+#
+# Bug: https://github.com/Azure/azure-dev/issues/8360
+#
+# After init+provision+down+purge, if you recreate the same project in the same
+# directory path, the ai-account name hash collides (same subscription + RG + location
+# = same hash). The old soft-deleted resource blocks creation of the new one, but
+# provision fails silently. Run and invoke then get a 404.
+#
+# The fix should generate a different ai-account name on the second init (e.g. by
+# salting the hash at init time). This scenario verifies that the second cycle works.
+#
+# This scenario runs TWO identical init→provision→invoke→down cycles in the SAME
+# directory. The second cycle is the one that triggers the bug.
+
+name: "repro-8360-duplicate-project"
+command: "azd ai agent init"
+
+env:
+  AZD_DISABLE_AGENT_DETECT: "1"
+
+goals:
+  # ═══════════════════════════════════════════════════════════════
+  # CYCLE 1 — baseline
+  # ═══════════════════════════════════════════════════════════════
+
+  # Init mode
+  - "When asked how to initialize, select 'Start new from a template'"
+
+  # Language
+  - "Select Python as the language"
+
+  # Template — pick 'Basic Responses'
+  - "Select the 'Basic Responses' template from the list"
+
+  # Deployment mode
+  - "When asked how to deploy, select 'Container' (hosted agent)"
+
+  # Azure Foundry project — CREATE NEW (important for repro)
+  - "When asked to select a Foundry project, choose 'Create a new Foundry project' (do NOT use an existing one)"
+
+  # Subscription
+  - "If asked to select a subscription, search for and select the 'benhanrahan' subscription"
+
+  # Region / location
+  - "If asked for a location or region, select 'East US 2'"
+
+  # Model selection
+  - "When asked to select a model, choose 'gpt-4.1-mini'"
+
+  # Model version — accept default
+  - "If asked for a model version, accept the default"
+
+  # Model SKU — accept default
+  - "If asked for a model SKU, accept the default"
+
+  # Model capacity
+  - "If asked for model capacity, enter '10' or accept the default"
+
+  # Model deployment name — accept default
+  - "If asked for a model deployment name, accept the default (press Enter)"
+
+  # Container size
+  - "If asked for container/resource size, select 'Small'"
+
+  # Wait for init to complete
+  - "Wait for initialization to complete — look for 'Next:' or 'SUCCESS' in the output"
+
+  # Provision
+  - "Run 'azd provision' and wait for it to succeed. IMPORTANT: note the ai-account name from the output (e.g. ai-account-XXXXX)"
+
+  # Invoke the agent (cloud, not local)
+  - "Run 'azd ai agent invoke <agent-name> \"hello\"' to invoke the agent. Confirm you get a response (not a 404)"
+
+  # Tear down
+  - "Run 'azd down --force --purge' and wait for full cleanup"
+
+  # ═══════════════════════════════════════════════════════════════
+  # CYCLE 2 — the repro (same directory, same choices)
+  # ═══════════════════════════════════════════════════════════════
+
+  # Clean the directory
+  - "Delete everything in the working directory: rm -rf * .* 2>/dev/null; then re-run 'azd ai agent init' in the SAME directory"
+
+  # Init mode — same as cycle 1
+  - "When asked how to initialize, select 'Start new from a template'"
+
+  # Language — same
+  - "Select Python as the language"
+
+  # Template — same
+  - "Select the 'Basic Responses' template"
+
+  # Deployment mode — same
+  - "Select 'Container' (hosted agent)"
+
+  # Foundry project — CREATE NEW again (same as cycle 1)
+  - "Choose 'Create a new Foundry project' again"
+
+  # Subscription — same
+  - "Search for and select the 'benhanrahan' subscription"
+
+  # Region — same
+  - "Select 'East US 2'"
+
+  # Model — same
+  - "Choose 'gpt-4.1-mini'"
+
+  # Model version, SKU, capacity, deployment name — accept defaults
+  - "Accept all model defaults (version, SKU, capacity 10, deployment name)"
+
+  # Container size — same
+  - "Select 'Small' for container size"
+
+  # Wait for init
+  - "Wait for init to complete"
+
+  # Provision — the key test
+  - "Run 'azd provision'. IMPORTANT: note the ai-account name — it SHOULD DIFFER from cycle 1. If it's the same, the fix didn't work."
+
+  # Invoke — the moment of truth
+  - "Run 'azd ai agent invoke <agent-name> \"hello\"'. EXPECTED (with fix): valid response. PREVIOUSLY BROKEN: 404 because ai-account hash was identical."
+
+  # Report findings
+  - "Report: (1) Did cycle 2 invoke succeed or 404? (2) Did the ai-account name differ between cycles? (3) Any silent provision failures?"
+
+  # Final cleanup
+  - "Run 'azd down --force --purge' to clean up"

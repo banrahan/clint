@@ -1,0 +1,20 @@
+name: sample-02-tools
+description: >
+  Test the 02-tools sample README end-to-end.
+  README: ~/working/foundry-samples-pr/samples/python/hosted-agents/agent-framework/responses/02-tools/README.md
+
+command: azd ai agent init -m /Users/benhanrahan/working/foundry-samples-pr/samples/python/hosted-agents/agent-framework/responses/02-tools/agent.manifest.yaml
+cwd: ~/working/agents-tools
+env:
+  AZD_DISABLE_AGENT_DETECT: "1"
+
+goals:
+  - Follow the 02-tools README to init, provision, run locally, deploy, invoke, and clean up
+  - Use benhanrahan subscription and East US 2 region
+
+notes: |
+  - azd ai agent run blocks the terminal; use a second session or bash for azd ai agent invoke --local
+  - The invoke message should be: "What is the weather in Seattle?"
+  - Verify the tool call shows up in the response (get_weather function)
+  - After cloud deploy, invoke with: azd ai agent invoke <agent-name> "What is the weather in Seattle?"
+  - Clean up with: azd down --force --purge
