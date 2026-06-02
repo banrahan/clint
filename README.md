@@ -148,10 +148,11 @@ Open a **new** Copilot CLI session (so it picks up the config) and say:
 
 ```
 Use the cli-interactive-tester to load the scenario at scenarios/smoke-test.yaml,
-then start the session and accomplish the goals. Take screenshots at each step.
+then start the session and accomplish the goals. If the scenario declares pre or
+post hooks, run them before/after the session. Take screenshots at each step.
 ```
 
-That's it. Copilot CLI will use `load_scenario` to read the goals, then call `start_session`, `observe`, `send_action`, and `finish_session` to drive the CLI.
+That's it. Copilot CLI will use `load_scenario` to read the goals, then call `run_pre_hooks` (if any), `start_session`, `observe`, `send_action`, `finish_session`, and `run_post_hooks` (if any) to drive the CLI.
 
 ## Writing Scenarios
 
@@ -197,6 +198,56 @@ goal: |
 | `env` | no | Extra environment variables |
 | `goals` | one of goals/goal | List of step-by-step goal descriptions |
 | `goal` | one of goals/goal | Single free-text goal description |
+| `pre` | no | List of host shell hooks to run **before** `start_session` (see below) |
+| `post` | no | List of host shell hooks to run **after** `finish_session` (see below) |
+
+### Pre and post hooks
+
+`pre` and `post` declare host shell commands (run outside tmux) for setup and
+cleanup — e.g., create a working directory, `git init`, seed fixture files,
+then tear them down after the run. Copilot CLI invokes them via the
+`run_pre_hooks` and `run_post_hooks` MCP tools.
+
+Each entry is either a **string** (the command) or a **mapping** with:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `run` | required | Shell command (executed via `bash -c` semantics, so pipes/`&&` work) |
+| `cwd` | scenario `cwd` | Working directory; created if missing |
+| `env` | `{}` | Extra environment variables merged onto the inherited environment |
+| `continue_on_error` | `false` | If `true`, a non-zero exit does **not** abort the remaining hooks |
+| `timeout` | `120` | Per-hook timeout in seconds |
+| `name` | `run` value | Label shown in the result summary |
+
+Execution is **sequential and fail-fast**: the first failing hook aborts the
+phase unless that hook opts in to `continue_on_error: true`. Subsequent hooks
+after an abort are reported as `SKIPPED`.
+
+```yaml
+name: "with-setup"
+command: "my-cli init"
+cwd: "/tmp/with-setup"
+
+pre:
+  - "rm -rf /tmp/with-setup"
+  - run: "mkdir -p /tmp/with-setup"
+    name: "create working dir"
+  - run: "echo 'hello world' > hello.txt"
+    cwd: "/tmp/with-setup"
+
+goals:
+  - "Accept the default project name"
+  - "Wait for 'Done'"
+
+post:
+  - run: "rm -rf /tmp/with-setup"
+    continue_on_error: true
+```
+
+> **Note (Windows / WSL)**: The MCP server runs inside WSL on Windows, so
+> `cwd` and `run` values are interpreted as Linux paths (e.g.,
+> `/mnt/c/Repos/foo`). Scenario YAMLs are trusted input — they execute
+> arbitrary shell commands on the host.
 
 ## MCP Tools Reference
 
@@ -204,11 +255,32 @@ These are the tools Copilot CLI will use automatically. You don't call them dire
 
 ### `load_scenario`
 
-Read a scenario YAML file and get the goals/configuration.
+Read a scenario YAML file and get the goals/configuration. Surfaces any
+declared pre/post hooks so you know to invoke `run_pre_hooks` /
+`run_post_hooks`.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `path` | string | Path to YAML file (absolute or relative, supports `~`) |
+
+### `run_pre_hooks`
+
+Execute the scenario's `pre:` list of host shell hooks before launching the
+CLI. Fail-fast unless a hook sets `continue_on_error: true`. See the
+"Pre and post hooks" section above for the schema.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `scenario_path` | string | Path to the YAML scenario file |
+
+### `run_post_hooks`
+
+Execute the scenario's `post:` list of host shell hooks after the session ends
+(typically cleanup). Same semantics as `run_pre_hooks`.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `scenario_path` | string | Path to the YAML scenario file |
 
 ### `start_session`
 
