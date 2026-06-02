@@ -25,13 +25,17 @@
 # init from inside the manifest directory.
 
 name: "repro-8523-init-from-manifest-in-cwd"
-command: "bash -c 'git clone https://github.com/microsoft-foundry/foundry-samples /tmp/foundry-samples-8523 --depth=1 && cd /tmp/foundry-samples-8523/samples/python/hosted-agents/agent-framework/responses/01-basic && azd ai agent init'"
-cwd: "/tmp"
+command: "azd ai agent init"
+cwd: "/tmp/foundry-samples-8523/samples/python/hosted-agents/agent-framework/responses/01-basic"
+
+pre:
+  - run: "rm -rf /tmp/foundry-samples-8523"
+    name: "clean up any prior clone"
+    continue_on_error: true
+  - run: "git clone https://github.com/microsoft-foundry/foundry-samples /tmp/foundry-samples-8523 --depth=1"
+    name: "clone foundry-samples"
 
 goals:
-  # Setup: clone happens as part of the command, then cd into the 01-basic sample dir
-  - "Wait for the git clone to complete and for azd ai agent init to start"
-
   # The auto-detect prompt — MUST say Yes to trigger the bug
   - "When prompted 'An existing agent manifest was found. Use it?' (or similar), select YES — this is what triggers the bug path"
 
@@ -66,5 +70,7 @@ goals:
   # No Azure resources are provisioned in this scenario — it fails at init time
   - "Do NOT run azd provision or azd deploy. This scenario only tests the init step."
 
-  # Cleanup
-  - "Run 'rm -rf /tmp/foundry-samples-8523' to clean up the cloned repo. No Azure resources were provisioned."
+post:
+  - run: "rm -rf /tmp/foundry-samples-8523"
+    name: "clean up cloned repo"
+    continue_on_error: true
