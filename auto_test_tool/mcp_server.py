@@ -7,11 +7,15 @@ Exposes tmux-backed terminal control as MCP tools so that Copilot CLI
 state and sending actions, similar to Playwright MCP for browsers.
 
 Tools:
-    start_session  — Launch a command in tmux
-    observe        — Read current terminal text
-    send_action    — Send keystrokes (select, confirm, input, etc.)
-    screenshot     — Capture terminal → SVG
-    finish_session — Tear down session and generate HTML report
+    load_scenario   — Read a scenario YAML and summarize goals + pre/post hooks
+    run_pre_hooks   — Execute the scenario's `pre:` host shell hooks (setup)
+    start_session   — Launch a command in tmux
+    observe         — Read current terminal text
+    send_action     — Send keystrokes (select, confirm, input, etc.)
+    screenshot      — Capture terminal → SVG
+    report_finding  — Record a bug / UX issue with a screenshot
+    finish_session  — Tear down session and generate HTML report
+    run_post_hooks  — Execute the scenario's `post:` host shell hooks (cleanup)
 
 Resources:
     scenario://{path} — Read a scenario YAML file
@@ -26,6 +30,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .agent import AgentSession
 from .runner import tmux_is_installed
+from .hooks import execute_hooks, format_hook_results, parse_hooks
 
 mcp = FastMCP(
     "azd-test-tool",
@@ -33,9 +38,11 @@ mcp = FastMCP(
 
 Your workflow:
 1. Read the scenario file (if provided) to understand the goals.
-2. Call start_session to launch the command.
-3. Loop: call observe to see the terminal, then call send_action to interact.
-4. When the task is complete, call finish_session to generate a report.
+2. If the scenario lists pre hooks, call run_pre_hooks before launching the CLI.
+3. Call start_session to launch the command.
+4. Loop: call observe to see the terminal, then call send_action to interact.
+5. When the task is complete, call finish_session to generate a report.
+6. If the scenario lists post hooks, call run_post_hooks after finish_session.
 
 Tips for interpreting the terminal:
 - Lines with ">" or "❯" indicate the currently selected item in a list.
@@ -279,6 +286,8 @@ def load_scenario(path: str) -> str:
 
     Call this first to understand what the scenario wants you to do,
     then use start_session with the command/cwd/env from the scenario.
+    If the scenario declares pre/post hooks, also call run_pre_hooks before
+    start_session and run_post_hooks after finish_session.
 
     Args:
         path: Path to the YAML scenario file (absolute or relative, supports ~).
@@ -289,14 +298,73 @@ def load_scenario(path: str) -> str:
     return _read_scenario_file(path)
 
 
-def _read_scenario_file(path: str) -> str:
-    """Internal: parse a scenario YAML and return a structured summary."""
+@mcp.tool()
+def run_pre_hooks(scenario_path: str) -> str:
+    """Execute the scenario's `pre` host shell hooks in order.
+
+    Call this after load_scenario and before start_session when the scenario
+    declares a `pre:` list. Hooks run on the host (not inside tmux). Execution
+    is fail-fast unless a hook sets `continue_on_error: true`; remaining hooks
+    after an abort are marked SKIPPED.
+
+    Args:
+        scenario_path: Path to the YAML scenario file.
+
+    Returns:
+        Human-readable summary of each hook's status, exit code, and output tails.
+    """
+    return _run_phase(scenario_path, "pre")
+
+
+@mcp.tool()
+def run_post_hooks(scenario_path: str) -> str:
+    """Execute the scenario's `post` host shell hooks in order.
+
+    Call this after finish_session when the scenario declares a `post:` list
+    (typically cleanup). Same execution semantics as run_pre_hooks.
+
+    Args:
+        scenario_path: Path to the YAML scenario file.
+
+    Returns:
+        Human-readable summary of each hook's status, exit code, and output tails.
+    """
+    return _run_phase(scenario_path, "post")
+
+
+def _load_scenario_data(path: str) -> tuple[str, dict | None, str | None]:
+    """Return (expanded_path, data_or_None, error_or_None)."""
     expanded = os.path.expanduser(path)
     if not os.path.isfile(expanded):
-        return f"ERROR: Scenario file not found: {expanded}"
-
+        return expanded, None, f"ERROR: Scenario file not found: {expanded}"
     with open(expanded) as f:
-        data = yaml.safe_load(f)
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        return expanded, None, f"ERROR: Scenario root must be a mapping, got {type(data).__name__}"
+    return expanded, data, None
+
+
+def _run_phase(scenario_path: str, phase: str) -> str:
+    _, data, err = _load_scenario_data(scenario_path)
+    if err:
+        return err
+    raw = data.get(phase)
+    try:
+        hooks = parse_hooks(raw, scenario_cwd=data.get("cwd"))
+    except ValueError as e:
+        return f"ERROR: Invalid {phase} hooks in scenario: {e}"
+    if not hooks:
+        return f"No {phase} hooks declared in scenario."
+    results = execute_hooks(hooks)
+    return format_hook_results(phase, results)
+
+
+def _read_scenario_file(path: str) -> str:
+    """Internal: parse a scenario YAML and return a structured summary."""
+    expanded, data, err = _load_scenario_data(path)
+    if err:
+        return err
+    assert data is not None
 
     parts = [f"Scenario: {data.get('name', '(unnamed)')}"]
     parts.append(f"Command: {data.get('command', '(none)')}")
@@ -304,6 +372,28 @@ def _read_scenario_file(path: str) -> str:
         parts.append(f"Working directory: {data['cwd']}")
     if data.get("env"):
         parts.append(f"Environment: {data['env']}")
+
+    for phase in ("pre", "post"):
+        raw = data.get(phase)
+        if not raw:
+            continue
+        try:
+            hooks = parse_hooks(raw, scenario_cwd=data.get("cwd"))
+        except ValueError as e:
+            parts.append(f"\n{phase.capitalize()} hooks: INVALID — {e}")
+            continue
+        parts.append(
+            f"\n{phase.capitalize()} hooks ({len(hooks)}) — "
+            f"call run_{phase}_hooks to execute:"
+        )
+        for i, h in enumerate(hooks, 1):
+            flags = []
+            if h.continue_on_error:
+                flags.append("continue_on_error")
+            if h.timeout != 120:
+                flags.append(f"timeout={h.timeout}s")
+            suffix = f"  [{', '.join(flags)}]" if flags else ""
+            parts.append(f"  {i}. {h.label}{suffix}")
 
     if data.get("goals"):
         parts.append("\nGoals:")

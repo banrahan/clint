@@ -1,0 +1,21 @@
+name: "with-setup"
+command: "bash -c 'ls && cat hello.txt && echo done'"
+cwd: "/tmp/with-setup"
+
+pre:
+  - "rm -rf /tmp/with-setup"
+  - run: "mkdir -p /tmp/with-setup"
+    name: "create working dir"
+  - run: "echo 'hello world' > hello.txt"
+    cwd: "/tmp/with-setup"
+    name: "seed fixture file"
+
+goals:
+  - "Wait for 'hello world' to appear in the terminal"
+  - "Wait for 'done' to appear"
+  - "Take a screenshot of the final state"
+
+post:
+  - run: "rm -rf /tmp/with-setup"
+    name: "cleanup working dir"
+    continue_on_error: true
