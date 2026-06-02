@@ -36,14 +36,16 @@ brew install tmux          # terminal backend (macOS)
 <details>
 <summary><strong>Windows</strong></summary>
 
-Install tmux via WSL (Windows Subsystem for Linux):
+The MCP server shells out to `tmux` directly, so on Windows **both tmux and the MCP server must run inside WSL** (Windows Subsystem for Linux). The Windows-side `python.exe` cannot find `tmux` and will fail with `ERROR: tmux is required`.
 
 ```powershell
-wsl --install                # if WSL isn't set up yet
-wsl sudo apt install tmux
+wsl --install                       # if WSL isn't set up yet
+wsl sudo apt update
+wsl sudo apt install -y tmux
+wsl tmux -V                         # verify, e.g. "tmux 3.6"
 ```
 
-> **Note**: The MCP server uses tmux for terminal control, so on Windows it runs inside WSL.
+> **Note**: You will set up a separate Linux venv inside WSL in step 2, and register the MCP server to launch via `wsl` in step 3.
 
 </details>
 
@@ -65,17 +67,27 @@ uv pip install -e .
 </details>
 
 <details>
-<summary><strong>Windows (PowerShell)</strong></summary>
+<summary><strong>Windows (PowerShell + WSL)</strong></summary>
+
+Because the MCP server must run inside WSL (see prerequisites), create the venv **inside WSL**, not on the Windows side. You can keep the repo checked out on the Windows filesystem and access it from WSL via `/mnt/c/...`.
 
 ```powershell
 git clone https://github.com/coreai-microsoft/cli-interactive-tester.git
 cd cli-interactive-tester
-uv venv .venv --python 3.12
-.venv\Scripts\Activate.ps1
-uv pip install -e .
+
+# Install uv inside WSL (one-time)
+wsl bash -lc "curl -LsSf https://astral.sh/uv/install.sh | sh"
+
+# Create a Linux venv inside the repo and install the package editable
+wsl bash -lc "cd /mnt/c/Repos/cli-interactive-tester && ~/.local/bin/uv venv .venv-wsl --python 3.12 && ~/.local/bin/uv pip install --python .venv-wsl/bin/python -e ."
+
+# Sanity check
+wsl /mnt/c/Repos/cli-interactive-tester/.venv-wsl/bin/python -c "import auto_test_tool.mcp_server; print('OK')"
 ```
 
-> **Note**: If you don't have `uv`, use `python -m venv .venv && .venv\Scripts\Activate.ps1 && pip install -e .`
+> **Note**: If you don't want `uv`, substitute `python3 -m venv .venv-wsl && .venv-wsl/bin/pip install -e .` inside WSL.
+
+> **Note**: Adjust `/mnt/c/Repos/cli-interactive-tester` to wherever you cloned the repo.
 
 </details>
 
@@ -106,24 +118,29 @@ Example path: `/Users/you/working/cli-interactive-tester`
 <details>
 <summary><strong>Windows</strong></summary>
 
+On Windows the server is launched **through `wsl`** so it can reach `tmux`. Point `command` at `wsl` and use a bash login shell to `cd` into the repo (via its `/mnt/c/...` path) and exec the Linux venv's Python:
+
 ```json
 {
   "mcpServers": {
     "cli-interactive-tester": {
       "type": "stdio",
-      "command": "<FULL-PATH-TO-REPO>\\.venv\\Scripts\\python.exe",
-      "args": ["-m", "auto_test_tool.mcp_server"],
-      "cwd": "<FULL-PATH-TO-REPO>"
+      "command": "wsl",
+      "args": [
+        "bash",
+        "-lc",
+        "cd /mnt/c/Repos/cli-interactive-tester && exec .venv-wsl/bin/python -m auto_test_tool.mcp_server"
+      ]
     }
   }
 }
 ```
 
-Example path: `C:\\Users\\you\\working\\cli-interactive-tester`
+Replace `/mnt/c/Repos/cli-interactive-tester` with the WSL path to your clone (a Windows path like `C:\Repos\foo` becomes `/mnt/c/Repos/foo`).
 
 </details>
 
-> **Important**: Use the full path to the **venv Python**, not a system Python. This ensures the MCP and other dependencies are available.
+> **Important**: On macOS/Linux, use the full path to the **venv Python**, not a system Python. On Windows, launch through `wsl` so `tmux` is on PATH; the Windows-side `python.exe` will fail with `ERROR: tmux is required`.
 
 ### 4. Run a scenario
 
@@ -275,7 +292,7 @@ Open `report.html` in a browser to review the test run.
 
 | Problem | Fix |
 |---------|-----|
-| "tmux is required" | `brew install tmux` |
+| "tmux is required" | macOS: `brew install tmux`. Linux: `sudo apt install tmux`. Windows: install tmux in WSL **and** register the MCP server to launch via `wsl` (see Windows setup) — running the server from Windows-side Python will not see tmux. |
 | MCP server not found | Check the `command` path in mcp-config.json points to the venv Python |
 | "No active session" | Call `start_session` before `observe`/`send_action` |
 | Terminal shows old state | Call `observe` — it waits for content to change |
