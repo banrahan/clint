@@ -7,15 +7,16 @@ Exposes tmux-backed terminal control as MCP tools so that Copilot CLI
 state and sending actions, similar to Playwright MCP for browsers.
 
 Tools:
-    load_scenario   — Read a scenario YAML and summarize goals + pre/post hooks
-    run_pre_hooks   — Execute the scenario's `pre:` host shell hooks (setup)
-    start_session   — Launch a command in tmux
-    observe         — Read current terminal text
-    send_action     — Send keystrokes (select, confirm, input, etc.)
-    screenshot      — Capture terminal → SVG
-    report_finding  — Record a bug / UX issue with a screenshot
-    finish_session  — Tear down session and generate HTML report
-    run_post_hooks  — Execute the scenario's `post:` host shell hooks (cleanup)
+    load_scenario          — Read a scenario YAML and summarize goals + pre/post hooks
+    run_pre_hooks          — Execute the scenario's `pre:` host shell hooks (setup)
+    start_session          — Launch a command in tmux
+    observe                — Read current terminal text
+    send_action            — Send keystrokes (select, confirm, input, etc.)
+    screenshot             — Capture terminal → SVG
+    report_finding         — Record a bug / UX issue with a screenshot
+    finish_session         — Tear down session and generate HTML report
+    run_post_hooks         — Execute the scenario's `post:` host shell hooks (cleanup)
+    release_scenario_ports — Drop the shared port pool for a scenario (defensive)
 
 Resources:
     scenario://{path} — Read a scenario YAML file
@@ -30,7 +31,9 @@ from mcp.server.fastmcp import FastMCP
 
 from .agent import AgentSession
 from .runner import tmux_is_installed
-from .hooks import execute_hooks, format_hook_results, parse_hooks
+from .hooks import Hook, execute_hooks, format_hook_results, parse_hooks
+from .ports import PortPool, get_pool, merged_vars, release_pool
+from .template import substitute_in_mapping, substitute_template
 
 mcp = FastMCP(
     "azd-test-tool",
@@ -58,6 +61,9 @@ Tips for interpreting the terminal:
 
 # Active sessions keyed by session_id (support multiple concurrent sessions)
 _sessions: dict[str, AgentSession] = {}
+# Map session_id -> scenario_path so finish_session can refcount-release the
+# scenario's PortPool when the last session referencing it tears down.
+_session_scenarios: dict[str, str] = {}
 
 
 def _get_session(session_id: str) -> AgentSession:
@@ -70,6 +76,58 @@ def _get_session(session_id: str) -> AgentSession:
     return _sessions[session_id]
 
 
+def _resolve_vars(
+    scenario_path: str | None,
+    extra: dict[str, str] | None,
+    instance_id: str | None = None,
+) -> tuple[dict[str, object], PortPool | None]:
+    """Build the template-var dict for one MCP call.
+
+    Loads the scenario (if any), gets-or-creates its ``PortPool``, and
+    merges in any caller-supplied ``extra`` vars. Returns the merged
+    dict plus the pool (so callers can format an "Allocated ports" block).
+
+    Keying rules:
+
+    * ``instance_id=None`` (default) — pool key is the scenario path
+      alone. Run + invoke of one instance share the same pool. The
+      ``{instance}`` template var defaults to ``"main"`` so scenarios
+      that interpolate it (e.g. ``cwd: '/tmp/run-{instance}'``) still
+      resolve cleanly in single-instance use.
+    * ``instance_id="<tag>"`` — pool key is ``f"{path}#{tag}"`` so N
+      parallel runs of one scenario get N independent pools. The
+      ``{instance}`` template var is set to ``<tag>``.
+
+    Explicit ``session_vars["instance"]`` always wins over both
+    defaults so callers can override.
+    """
+    if not scenario_path:
+        return dict(extra or {}), None
+    expanded, data, err = _load_scenario_data(scenario_path)
+    if err or data is None:
+        return dict(extra or {}), None
+    pool_key = f"{expanded}#{instance_id}" if instance_id else expanded
+    pool = get_pool(pool_key, data.get("allocate_ports"))
+    base_vars = merged_vars(pool, extra)
+    # Auto-inject {instance} so scenarios can interpolate it in cwd/env/etc
+    # without forcing callers to pass session_vars for the common case.
+    base_vars.setdefault("instance", instance_id or "main")
+    return base_vars, pool
+
+
+def _pool_key_for_session(scenario_path: str, instance_id: str | None) -> str:
+    """Mirror the keying used in ``_resolve_vars`` for refcount release."""
+    expanded = os.path.expanduser(scenario_path)
+    return f"{expanded}#{instance_id}" if instance_id else expanded
+
+
+def _format_allocated_ports(pool: PortPool | None) -> str:
+    if not pool or not pool.names:
+        return ""
+    parts = [f"{name}={pool.get(name)}" for name in pool.names]
+    return "Allocated ports: " + ", ".join(parts)
+
+
 @mcp.tool()
 def start_session(
     command: str,
@@ -78,20 +136,38 @@ def start_session(
     env: dict[str, str] | None = None,
     output_dir: str = "reports",
     run_name: str | None = None,
+    scenario_path: str | None = None,
+    session_vars: dict[str, str] | None = None,
+    instance_id: str | None = None,
 ) -> str:
     """Start an interactive CLI command in a tmux terminal session.
 
     Args:
         command: The CLI command to run (e.g. "azd ai agent init").
+                 May contain ``{name}`` placeholders resolved from the
+                 scenario's allocated ports (see ``allocate_ports`` in
+                 the scenario YAML) and ``session_vars``.
         cwd: Working directory. Supports ~ expansion. Created if it doesn't exist.
              If not provided, a temp directory under /tmp is created automatically.
+             Also subject to ``{name}`` substitution.
         session_id: Identifier for this session (allows multiple concurrent sessions).
-        env: Extra environment variables to set.
+        env: Extra environment variables to set. Values are substituted.
         output_dir: Where to store screenshots and the final HTML report.
         run_name: Name for the run folder (e.g. scenario name). Defaults to a timestamp.
+        scenario_path: When provided, share the scenario's ``PortPool`` with
+            other sessions of the same scenario so e.g. ``azd ai agent run``
+            and ``azd ai agent invoke --local`` see the same ``{port}``.
+        session_vars: Extra ``{name}`` substitutions for this call only.
+        instance_id: Tag for parallel instances of the SAME scenario.
+            When set, this session gets its own ``PortPool`` (keyed by
+            ``scenario_path + instance_id``) so 3 parallel runs of one
+            scenario don't share the same ``{port}``. The id is also
+            available as ``{instance}`` in templated strings — useful for
+            making ``cwd`` and resource names unique across instances.
 
     Returns:
-        The initial terminal text after the command starts.
+        The initial terminal text after the command starts, prefixed with
+        the allocated port assignments when the scenario declared any.
     """
     if not tmux_is_installed():
         return "ERROR: tmux is required but not installed. Install with: brew install tmux"
@@ -99,23 +175,41 @@ def start_session(
     if session_id in _sessions:
         return f"ERROR: Session '{session_id}' is already active. Finish it first or use a different session_id."
 
+    try:
+        vars_dict, pool = _resolve_vars(scenario_path, session_vars, instance_id)
+        resolved_command = substitute_template(command, vars_dict)
+        resolved_cwd = substitute_template(cwd, vars_dict) if cwd else cwd
+        resolved_env = substitute_in_mapping(env or {}, vars_dict)
+    except KeyError as e:
+        return f"ERROR: {e}"
+
     session = AgentSession(
-        command=command,
-        cwd=cwd,
-        env=env or {},
+        command=resolved_command,
+        cwd=resolved_cwd,
+        env=resolved_env,
         output_dir=output_dir,
         run_name=run_name,
+        session_id=session_id,
     )
     initial_state = session.start()
     _sessions[session_id] = session
+    if scenario_path:
+        _session_scenarios[session_id] = _pool_key_for_session(
+            scenario_path, instance_id
+        )
 
-    return (
+    ports_line = _format_allocated_ports(pool)
+    header = (
         f"Session '{session_id}' started.\n"
-        f"Command: {command}\n"
-        f"Working directory: {os.path.expanduser(cwd)}\n"
-        f"Screenshots: {session.run_dir}\n\n"
-        f"--- Terminal ---\n{initial_state}"
+        f"Command: {resolved_command}\n"
+        f"Working directory: {os.path.expanduser(session.cwd)}\n"
+        f"Screenshots: {session.run_dir}\n"
     )
+    if instance_id:
+        header += f"Instance: {instance_id}\n"
+    if ports_line:
+        header += ports_line + "\n"
+    return header + f"\n--- Terminal ---\n{initial_state}"
 
 
 @mcp.tool()
@@ -211,6 +305,11 @@ def send_action(
         return f"ERROR: Unknown action '{action}'. Use: select, confirm, input, multi_select, key, wait."
 
     new_state = session.act(action_dict)
+    # Surface action errors to the caller — otherwise LookupError etc. get
+    # buried in the step result and the agent sees only the terminal state.
+    last_step = session.result.steps[-1] if session.result.steps else None
+    if last_step and last_step.error:
+        return f"ERROR during {action!r}: {last_step.error}\n\n--- Terminal ---\n{new_state}"
     return new_state
 
 
@@ -266,7 +365,8 @@ def finish_session(session_id: str = "default") -> str:
     """Stop the terminal session and generate an HTML report.
 
     This kills the tmux session, captures a final screenshot, and produces
-    an HTML report with all captured screenshots embedded.
+    an HTML report with all captured screenshots embedded. When the last
+    session for a scenario finishes, its shared ``PortPool`` is released.
 
     Args:
         session_id: Which session to finish.
@@ -277,7 +377,34 @@ def finish_session(session_id: str = "default") -> str:
     session = _get_session(session_id)
     report_path = session.finish()
     del _sessions[session_id]
+
+    scenario_path = _session_scenarios.pop(session_id, None)
+    # Refcount: release the pool only when no other active session is using it.
+    if scenario_path and scenario_path not in _session_scenarios.values():
+        release_pool(scenario_path)
+
     return f"Session finished. Report: {report_path}"
+
+
+@mcp.tool()
+def release_scenario_ports(scenario_path: str) -> str:
+    """Drop the shared ``PortPool`` for a scenario.
+
+    ``finish_session`` already releases pools automatically when the last
+    session for a scenario tears down; call this only when you've abandoned
+    a scenario without finishing every session (e.g. an error path).
+
+    Args:
+        scenario_path: Path passed earlier to ``start_session`` /
+            ``load_scenario``.
+    """
+    expanded = os.path.expanduser(scenario_path)
+    released = release_pool(expanded)
+    return (
+        f"Released port pool for {expanded}."
+        if released
+        else f"No port pool was registered for {expanded}."
+    )
 
 
 @mcp.tool()
@@ -344,10 +471,11 @@ def _load_scenario_data(path: str) -> tuple[str, dict | None, str | None]:
     return expanded, data, None
 
 
-def _run_phase(scenario_path: str, phase: str) -> str:
-    _, data, err = _load_scenario_data(scenario_path)
+def _run_phase(scenario_path: str, phase: str, instance_id: str | None = None) -> str:
+    expanded, data, err = _load_scenario_data(scenario_path)
     if err:
         return err
+    assert data is not None
     raw = data.get(phase)
     try:
         hooks = parse_hooks(raw, scenario_cwd=data.get("cwd"))
@@ -355,7 +483,29 @@ def _run_phase(scenario_path: str, phase: str) -> str:
         return f"ERROR: Invalid {phase} hooks in scenario: {e}"
     if not hooks:
         return f"No {phase} hooks declared in scenario."
-    results = execute_hooks(hooks)
+
+    # Apply ``{name}`` substitution to hook ``run`` / ``cwd`` / ``env`` values
+    # using the scenario's shared port pool. Substitution happens at this
+    # boundary so hooks.py stays agnostic of scenario-level concerns.
+    vars_dict, _ = _resolve_vars(scenario_path, None, instance_id)
+    try:
+        resolved: list[Hook] = []
+        for h in hooks:
+            resolved.append(
+                Hook(
+                    run=substitute_template(h.run, vars_dict),
+                    cwd=substitute_template(h.cwd, vars_dict) if h.cwd else h.cwd,
+                    explicit_cwd=h.explicit_cwd,
+                    env=substitute_in_mapping(h.env, vars_dict),
+                    continue_on_error=h.continue_on_error,
+                    timeout=h.timeout,
+                    name=h.name,
+                )
+            )
+    except KeyError as e:
+        return f"ERROR: Invalid placeholder in {phase} hook: {e}"
+
+    results = execute_hooks(resolved)
     return format_hook_results(phase, results)
 
 
@@ -366,12 +516,32 @@ def _read_scenario_file(path: str) -> str:
         return err
     assert data is not None
 
+    # Materialise the shared port pool (if any) so the goals/command shown
+    # here use the same allocated values that ``start_session`` will see.
+    try:
+        vars_dict, pool = _resolve_vars(path, None, None)
+    except ValueError as e:
+        return f"ERROR: Invalid allocate_ports: {e}"
+
+    def sub(s: object) -> str:
+        if not isinstance(s, str):
+            return str(s)
+        try:
+            return substitute_template(s, vars_dict)
+        except KeyError:
+            # Don't refuse to display the scenario just because a placeholder
+            # references something only available at runtime via session_vars.
+            return s
+
     parts = [f"Scenario: {data.get('name', '(unnamed)')}"]
-    parts.append(f"Command: {data.get('command', '(none)')}")
+    parts.append(f"Command: {sub(data.get('command', '(none)'))}")
     if data.get("cwd"):
-        parts.append(f"Working directory: {data['cwd']}")
+        parts.append(f"Working directory: {sub(data['cwd'])}")
     if data.get("env"):
         parts.append(f"Environment: {data['env']}")
+    if pool.names:
+        ports_line = ", ".join(f"{name}={pool.get(name)}" for name in pool.names)
+        parts.append(f"Allocated ports: {ports_line}")
 
     for phase in ("pre", "post"):
         raw = data.get(phase)
@@ -393,14 +563,14 @@ def _read_scenario_file(path: str) -> str:
             if h.timeout != 120:
                 flags.append(f"timeout={h.timeout}s")
             suffix = f"  [{', '.join(flags)}]" if flags else ""
-            parts.append(f"  {i}. {h.label}{suffix}")
+            parts.append(f"  {i}. {sub(h.label)}{suffix}")
 
     if data.get("goals"):
         parts.append("\nGoals:")
         for i, goal in enumerate(data["goals"], 1):
-            parts.append(f"  {i}. {goal}")
+            parts.append(f"  {i}. {sub(goal)}")
     elif data.get("goal"):
-        parts.append(f"\nGoal:\n{data['goal']}")
+        parts.append(f"\nGoal:\n{sub(data['goal'])}")
     elif data.get("steps"):
         parts.append("\nSteps (legacy format — treat as goals):")
         for i, step in enumerate(data["steps"], 1):

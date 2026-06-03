@@ -5,10 +5,20 @@
 #
 # Based on the hosted agents quickstart:
 #   https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent
+#
+# Parallel-ready: pass ``instance_id`` to ``start_session`` (and any matching
+# run/invoke sessions) so each parallel run gets its own ``{agent}`` port
+# and its own ``cwd`` (via the auto-injected ``{instance}`` variable).
+#
+# Single-instance usage works unchanged — ``instance_id`` defaults to "main".
 
 name: "init-basic-responses-agent"
 command: "azd ai agent init"
-cwd: "~/working/agents/basic-responses-test"
+cwd: "~/working/agents/basic-responses-test-{instance}"
+
+# Reserve a port per instance for the local `azd ai agent run` later in the flow,
+# so `run` and `invoke --local` in the same instance share it.
+allocate_ports: [agent]
 
 env:
   AZD_DISABLE_AGENT_DETECT: "1"
@@ -32,7 +42,7 @@ goals:
   - "If asked to select an Azure AI Foundry project, create one and follow prompts to create one."
 
   # Subscription
-  - "If asked to select a subscription, search for and select the 'benhanrahan' subscription"
+  - "If asked to select a subscription, search for and select the 'benhanrahan' subscription, if you can't find that subscription take a screenshot and exit"
 
   # Region / location
   - "If asked for a location or region, select 'East US 2'"
@@ -67,11 +77,16 @@ goals:
   # provision the agent after init
   - "once init is done figure out how to provision the agent"
 
-  # run the agent locally
-  - "azd ai agent run"
+  # run the agent locally on the per-instance allocated port
+  - "Open a new start_session (session_id='run-{instance}', same scenario_path,
+     same instance_id='{instance}') with command:
+       azd ai agent run --port {agent} --no-inspector"
 
-  # invoke the agent locally
-  - "azd ai agent invoke --local 'hello'"
+  # invoke the agent locally on the same port
+  - "Open another start_session (session_id='invoke-{instance}', same scenario_path,
+     same instance_id='{instance}') with command:
+       azd ai agent invoke --local --port {agent} 'hello'"
 
   # do an azd down to clean up
   - "do an azd down to clean up"
+

@@ -43,6 +43,93 @@ ACTION_SETTLE_DELAY = 2.0
 POLL_INTERVAL = 0.5
 PRE_ACTION_DELAY = 1.0  # wait for prompt widget to fully initialize
 
+# select_by_text tuning
+SELECT_FILTER_SETTLE = 0.4   # seconds to wait for filter to re-render
+SELECT_SCROLL_STEPS = 30     # max Down presses in scroll fallback
+SELECT_SCROLL_DELAY = 0.1    # sleep between Down presses
+HIGHLIGHT_MARKERS = (">", "❯")
+
+
+def _highlighted_lines(capture: str) -> list[str]:
+    return [
+        ANSI_RE.sub("", line)
+        for line in capture.split("\n")
+        if any(m in line for m in HIGHLIGHT_MARKERS)
+    ]
+
+
+def _all_lines(capture: str) -> list[str]:
+    return [ANSI_RE.sub("", line) for line in capture.split("\n")]
+
+
+def _line_matches(line: str, target: str) -> bool:
+    """Case-insensitive substring match, ignoring leading list markers/whitespace."""
+    cleaned = line.strip()
+    for marker in HIGHLIGHT_MARKERS:
+        if cleaned.startswith(marker):
+            cleaned = cleaned[len(marker):].strip()
+    return target.lower() in cleaned.lower()
+
+
+def _select_by_text(session: str, target: str) -> None:
+    """Pick a list item whose label contains ``target`` (case-insensitive).
+
+    Strategy:
+      1. If the target is already on a highlighted line, press Enter immediately.
+      2. Otherwise type ``target`` into the picker's filter, wait for it to
+         re-render, and Enter if the highlighted line now matches.
+      3. If filter typing didn't land us on the target, clear the filter
+         (Backspace * len(target)) and arrow-scroll up to SELECT_SCROLL_STEPS
+         times, pressing Enter on the first highlighted line that matches.
+      4. If none of the above succeed, raise ``LookupError`` rather than
+         pressing Enter on the wrong item.
+    """
+
+    def _highlighted_matches() -> bool:
+        capture = tmux_capture_pane(session, with_ansi=False)
+        for line in _highlighted_lines(capture):
+            if _line_matches(line, target):
+                return True
+        return False
+
+    # Phase 1: already highlighted?
+    if _highlighted_matches():
+        tmux_send_keys(session, "Enter")
+        return
+
+    # Phase 2: type into the filter.
+    tmux_send_text(session, target)
+    time.sleep(SELECT_FILTER_SETTLE)
+    if _highlighted_matches():
+        tmux_send_keys(session, "Enter")
+        return
+
+    # Phase 3: clear filter, then arrow-scroll.
+    for _ in range(len(target)):
+        tmux_send_keys(session, "BSpace")
+        time.sleep(0.02)
+    time.sleep(SELECT_FILTER_SETTLE)
+
+    seen_full_label: str | None = None
+    for _ in range(SELECT_SCROLL_STEPS):
+        capture = tmux_capture_pane(session, with_ansi=False)
+        for line in _highlighted_lines(capture):
+            if _line_matches(line, target):
+                tmux_send_keys(session, "Enter")
+                return
+            seen_full_label = line.strip()
+        tmux_send_keys(session, "Down")
+        time.sleep(SELECT_SCROLL_DELAY)
+
+    # Final capture for the error message.
+    capture = tmux_capture_pane(session, with_ansi=False)
+    visible = [l.strip() for l in _all_lines(capture) if l.strip()][-15:]
+    raise LookupError(
+        f"select_by_text could not find an item matching {target!r}. "
+        f"Last highlighted line: {seen_full_label!r}. "
+        f"Visible tail: {visible!r}"
+    )
+
 
 def _execute_agent_action(session: str, action: dict) -> None:
     """Execute an action decided by the agent."""
@@ -57,16 +144,9 @@ def _execute_agent_action(session: str, action: dict) -> None:
 
     elif act == "select_by_text":
         target = action.get("text", "")
-        for _ in range(25):
-            capture = tmux_capture_pane(session, with_ansi=False)
-            lines = capture.split("\n")
-            for line in lines:
-                if target.lower() in line.lower() and (">" in line or "❯" in line):
-                    tmux_send_keys(session, "Enter")
-                    return
-            tmux_send_keys(session, "Down")
-            time.sleep(0.15)
-        tmux_send_keys(session, "Enter")
+        if not target:
+            raise ValueError("select_by_text requires non-empty 'text'")
+        _select_by_text(session, target)
 
     elif act == "confirm":
         value = action.get("value", True)
@@ -133,13 +213,18 @@ class AgentSession:
         env: dict[str, str] | None = None,
         output_dir: str = "reports",
         run_name: str | None = None,
+        session_id: str | None = None,
     ):
         self.command = command
         self.env = env or {}
         self.env.setdefault("AZD_DISABLE_AGENT_DETECT", "1")
         self.env.setdefault("FORCE_COLOR", "1")
         self.output_dir = output_dir
-        self.session_name = tmux_session_name()
+        # Include the MCP session_id in the tmux name when known so that
+        # parallel sessions in one process don't collide and so logs are
+        # easier to correlate. tmux_session_name() appends a random suffix
+        # too as a final safety net.
+        self.session_name = tmux_session_name(session_id)
         self.is_done = False
         self.step_index = 0
         self.prev_capture = ""

@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -68,9 +69,20 @@ class ScenarioResult:
     error: str = ""
 
 
-def tmux_session_name() -> str:
-    """Generate a unique tmux session name."""
-    return f"{SESSION_PREFIX}-{os.getpid()}"
+def tmux_session_name(suffix: str | None = None) -> str:
+    """Generate a unique tmux session name.
+
+    The session name combines the current PID with a short random suffix
+    so multiple ``AgentSession`` instances inside the same MCP server
+    process don't collide on ``tmux new-session -s <name>``.
+
+    Pass an explicit ``suffix`` (e.g. the MCP ``session_id``) for
+    traceability; otherwise an 8-char uuid hex is generated.
+    """
+    token = suffix or uuid.uuid4().hex[:8]
+    # Sanitise: tmux session names can't contain '.' or ':' or whitespace.
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", token)
+    return f"{SESSION_PREFIX}-{os.getpid()}-{safe}"
 
 
 def tmux_is_installed() -> bool:

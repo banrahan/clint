@@ -200,6 +200,87 @@ goal: |
 | `goal` | one of goals/goal | Single free-text goal description |
 | `pre` | no | List of host shell hooks to run **before** `start_session` (see below) |
 | `post` | no | List of host shell hooks to run **after** `finish_session` (see below) |
+| `allocate_ports` | no | Reserve free TCP ports per scenario for `{name}` substitution (see "Parallelism & port allocation" below) |
+
+### Parallelism & port allocation
+
+CLIs that bind a fixed port (e.g. `azd ai agent run` defaults to `8088`)
+can't be exercised in parallel — or paired with a `--local` invoker —
+without colliding on the port. Declaring `allocate_ports:` in the
+scenario reserves free OS-assigned ports per **scenario run** and
+exposes them as `{name}` placeholders in `command`, `cwd`, `env`, hook
+fields, and `goals` / `goal` strings.
+
+Two forms:
+
+```yaml
+allocate_ports: [agent]        # named  → {agent}
+# or
+allocate_ports: 2              # numbered → {port1}, {port2}; {port} aliases {port1}
+```
+
+A pool is **shared across every `start_session` call that passes the
+same `scenario_path`**, so two sessions of one scenario see the same
+`{agent}` value — letting the `run` session and the `invoke --local`
+session find each other. The pool is released automatically when the
+last session for the scenario finishes.
+
+Example: parallel `azd ai agent run` + `invoke --local`:
+
+```yaml
+name: "parallel-agent"
+allocate_ports: [agent]
+command: "azd ai agent run --port {agent} --no-inspector"
+cwd: "/tmp/parallel-agent"
+
+goals:
+  - "Start the agent. Open a second session (session_id='invoke') with command:
+     azd ai agent invoke --local --port {agent} 'Hi'
+     Confirm both sessions report port {agent}."
+```
+
+Copilot CLI will:
+
+1. `load_scenario(...)` — sees `Allocated ports: agent=49733` and the
+   goal text with `{agent}` already replaced.
+2. `start_session(scenario_path=..., command="azd ai agent run --port {agent} --no-inspector", session_id="run")`
+   — substitution + tmux launch.
+3. `start_session(scenario_path=..., command="azd ai agent invoke --local --port {agent} 'Hi'", session_id="invoke")`
+   — same `scenario_path` → same pool → same port.
+
+#### Per-call `session_vars`
+
+`start_session(..., session_vars={"name": "demo"})` adds extra
+`{name}` substitutions for that one call (useful when you don't have a
+scenario file at all). They take precedence over allocated ports if
+names collide.
+
+#### Running N parallel instances of one scenario
+
+To run the **same scenario** multiple times concurrently (e.g. a stress
+test, or fanning out N independent agents), pass a distinct
+`instance_id` per call. Each `instance_id` gets its own port pool, and
+the value is exposed to substitution as `{instance}`:
+
+```yaml
+name: "parallel-instances"
+allocate_ports: [agent]
+cwd: "/tmp/agent-{instance}"
+command: "azd ai agent run --port {agent} --no-inspector"
+```
+
+```text
+start_session(scenario_path=..., instance_id="1", session_id="run-1", ...)
+start_session(scenario_path=..., instance_id="2", session_id="run-2", ...)
+start_session(scenario_path=..., instance_id="3", session_id="run-3", ...)
+```
+
+Each call materialises a separate pool (`{path}#1`, `{path}#2`, ...),
+allocates an independent `{agent}` port, and resolves `{instance}` to
+`"1"`, `"2"`, `"3"`. Within one `instance_id`, subsequent
+`start_session` calls (e.g. paired `run` + `invoke --local`) share that
+instance's pool. When `instance_id` is omitted, `{instance}` defaults
+to `"main"` so single-instance scenarios keep working unchanged.
 
 ### Pre and post hooks
 
@@ -284,15 +365,31 @@ Execute the scenario's `post:` list of host shell hooks after the session ends
 
 ### `start_session`
 
-Launch a command in a tmux terminal.
+Launch a command in a tmux terminal. `command`, `cwd`, and `env` values
+may contain `{name}` placeholders that resolve from the scenario's
+allocated ports (see "Parallelism & port allocation") and `session_vars`.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `command` | string | required | CLI command to run |
-| `cwd` | string | `"."` | Working directory |
+| `cwd` | string | `null` | Working directory (auto temp-dir when omitted) |
 | `session_id` | string | `"default"` | Session identifier (for concurrent sessions) |
 | `env` | object | `{}` | Extra environment variables |
-| `output_dir` | string | `"screenshots"` | Where to store screenshots/report |
+| `output_dir` | string | `"reports"` | Where to store screenshots/report |
+| `run_name` | string | timestamp | Folder name for this run |
+| `scenario_path` | string | `null` | Share the scenario's port pool with other sessions of the same scenario |
+| `session_vars` | object | `{}` | Extra `{name}` substitutions for this call |
+
+### `release_scenario_ports`
+
+Drop the shared port pool for a scenario. `finish_session` releases it
+automatically when the last session for the scenario tears down — call
+this only on error paths where you abandoned a scenario without
+finishing every session.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `scenario_path` | string | Path passed to `start_session` / `load_scenario` earlier |
 
 ### `observe`
 
@@ -310,12 +407,39 @@ Send keystrokes to the interactive CLI.
 |-----------|------|-----------|-------------|
 | `action` | string | all | One of: `select`, `confirm`, `input`, `multi_select`, `wait` |
 | `choice_index` | int | `select` | 0-based index of item to pick |
-| `choice_text` | string | `select` | Text label to match (scrolls to find it) |
+| `choice_text` | string | `select` | Text label to match — see "How `choice_text` resolves" below |
 | `value` | bool | `confirm` | `true` for yes, `false` for no |
 | `text` | string | `input` | Text to type (empty = accept default) |
 | `toggle_indices` | list[int] | `multi_select` | 0-based indices to toggle |
 | `seconds` | float | `wait` | How long to pause |
 | `session_id` | string | all | Which session to act on |
+
+#### How `choice_text` resolves
+
+For Survey-style pickers (the kind that show `Filter: Type to filter list`),
+`select(choice_text="...")` runs a three-phase lookup:
+
+1. **Already highlighted?** Capture the pane; if the highlighted line
+   (the one with `>` or `❯`) already contains the target as a
+   case-insensitive substring, press Enter and return.
+2. **Filter typing.** Otherwise type the target text into the picker's
+   filter, wait briefly, and Enter if the highlight now matches.
+3. **Scroll fallback.** If filter typing didn't land (older non-filterable
+   pickers, multi-line label, etc.), clear the filter with Backspaces and
+   arrow-key scroll, Entering on the first highlighted match.
+
+If none of the three phases finds a match, **`select` raises a
+`LookupError`**. The MCP `send_action` tool surfaces that error in the
+response body (prefixed with `ERROR during 'select': …`) so the agent
+sees the failure instead of a silent wrong-pick.
+
+> **Note for test runs.** Don't `observe` after every `select` to
+> "verify" the pick — these scenarios exist to *test* the CLI under
+> drive, and reactive verification masks the very bugs (silent mispicks,
+> picker regressions) the run is meant to catch. Send the action and
+> let downstream prompts surface any failure. The `LookupError` /
+> `ERROR during 'select': …` surface covers the "target not in list"
+> case — treat it as a hard failure, not a retry signal.
 
 ### `screenshot`
 

@@ -36,6 +36,7 @@ _STDIO_TAIL_CHARS = 2000
 class Hook:
     run: str
     cwd: str | None = None
+    explicit_cwd: bool = False  # True only when cwd was set in the hook definition
     env: dict[str, str] = field(default_factory=dict)
     continue_on_error: bool = False
     timeout: int = DEFAULT_TIMEOUT_S
@@ -76,7 +77,7 @@ def parse_hooks(raw: Any, scenario_cwd: str | None = None) -> list[Hook]:
     hooks: list[Hook] = []
     for i, entry in enumerate(raw):
         if isinstance(entry, str):
-            hooks.append(Hook(run=entry, cwd=scenario_cwd))
+            hooks.append(Hook(run=entry, cwd=scenario_cwd, explicit_cwd=False))
             continue
         if not isinstance(entry, dict):
             raise ValueError(f"Hook {i}: expected string or mapping, got {type(entry).__name__}")
@@ -94,10 +95,12 @@ def parse_hooks(raw: Any, scenario_cwd: str | None = None) -> list[Hook]:
         if not isinstance(timeout, (int, float)) or timeout <= 0:
             raise ValueError(f"Hook {i}: 'timeout' must be a positive number")
 
+        hook_cwd = entry.get("cwd")
         hooks.append(
             Hook(
                 run=run,
-                cwd=entry.get("cwd") or scenario_cwd,
+                cwd=hook_cwd or scenario_cwd,
+                explicit_cwd=bool(hook_cwd),
                 env=env,
                 continue_on_error=bool(entry.get("continue_on_error", False)),
                 timeout=int(timeout),
@@ -125,7 +128,7 @@ def execute_hooks(hooks: list[Hook]) -> list[HookResult]:
 
 def _run_one(hook: Hook) -> HookResult:
     cwd = os.path.expanduser(hook.cwd) if hook.cwd else None
-    if cwd:
+    if cwd and hook.explicit_cwd:
         os.makedirs(cwd, exist_ok=True)
 
     full_env = os.environ.copy()

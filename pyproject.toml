@@ -9,8 +9,17 @@ dependencies = [
     "rich>=13.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
 [project.scripts]
 azd-test-mcp = "auto_test_tool.mcp_server:main"
 
 [tool.setuptools.packages.find]
 include = ["auto_test_tool*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
