@@ -99,7 +99,14 @@ def tmux_is_installed() -> bool:
 def tmux_create_session(
     session: str, command: str, cwd: str, env: dict[str, str], width: int = 120, height: int = 40
 ) -> None:
-    """Create a detached tmux session running the given command."""
+    """Create a detached tmux session running the given command.
+
+    Scenario-provided env vars are passed via ``tmux new-session -e KEY=VAL``
+    so they override the tmux server's frozen environment. Without this, vars
+    like ``HOME`` silently no-op because the tmux server (started long ago)
+    pins its own env at startup and new sessions inherit *server* env, not
+    the caller's. See AGENTS.md for the failure mode this prevents.
+    """
     full_env = os.environ.copy()
     full_env.update(env)
     # Force color output in the tmux session
@@ -113,6 +120,13 @@ def tmux_create_session(
         "-x", str(width),
         "-y", str(height),
     ]
+    # Pass scenario-provided env vars (plus the forced color/term defaults)
+    # via -e so they override anything the tmux server has pinned.
+    per_session_env = dict(env)
+    per_session_env.setdefault("FORCE_COLOR", "1")
+    per_session_env.setdefault("TERM", "xterm-256color")
+    for key, value in per_session_env.items():
+        cmd.extend(["-e", f"{key}={value}"])
     if cwd:
         cmd.extend(["-c", os.path.expanduser(cwd)])
     cmd.append(command)

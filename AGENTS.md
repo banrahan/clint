@@ -128,6 +128,21 @@ one place that all entry points route through (see
 `_read_scenario_file`, and `_run_phase` each independently default the
 same variable — they'll drift.
 
+### Env vars must reach tmux via `-e`, not just the caller's env
+
+A long-running tmux server pins its environment at startup. New
+sessions inherit the **server's** env, not the env of the
+`tmux new-session` caller — so passing `env=full_env` to
+`subprocess.run` silently no-ops for any var the server already had
+(e.g. `HOME`, `PATH`, `XDG_*`). `tmux_create_session` already passes
+every scenario-supplied var via `-e KEY=VAL`; do the same for any new
+codepath that creates tmux sessions. See
+`tests/test_tmux_env_propagation.py` for the regression coverage.
+
+The symptom of getting this wrong is subtle and dangerous: scenarios
+that look isolated (e.g. `env: HOME: /tmp/...`) silently use the real
+HOME, so "clean install" tests pollute real config and auth.
+
 ### Tests are hermetic — keep them that way
 
 All tests under `tests/` run without touching tmux, Azure, or any

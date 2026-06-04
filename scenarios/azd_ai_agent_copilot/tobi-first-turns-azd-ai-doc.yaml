@@ -1,0 +1,81 @@
+# Scenario: Tobi's first two turns + azd ai doc available
+#
+# Same prompts as tobi-first-turns.yaml, but with the azd-ai-skill pack
+# pre-installed into the work dir via `azd ai doc install skill --target
+# copilot`. The first prompt is augmented with a short note pointing
+# Copilot CLI at the skill so it knows to consult it for self-help when
+# building / configuring / deploying the agent.
+#
+# Hypothesis: with `azd ai doc` topics available, Copilot CLI should
+# self-recover from the ambiguity that made all 4 baseline Opus 4.7
+# (High) runs pause to ask for the SharePoint site URL, and produce a
+# more complete scaffold without needing to ask the human.
+#
+# Compare to baseline: scenarios/azd_ai_agent_copilot/tobi-first-turns.yaml
+
+name: "tobi-first-turns-azd-ai-doc"
+command: "copilot --allow-all-tools --add-dir {cwd}"
+cwd: "/tmp/azd-ai-agent-copilot-tobi-doc-{instance}/work"
+
+pre:
+  - run: "rm -rf /tmp/azd-ai-agent-copilot-tobi-doc-{instance} && mkdir -p /tmp/azd-ai-agent-copilot-tobi-doc-{instance}/work"
+    cwd: "/tmp"
+    name: "prepare working dir"
+  - run: "cp ~/working/foundry-agents-uxr-wiki/raw/studies/hosted-agents-onboarding-ai-assisted/prototype-quickstart/quickstart.html /tmp/azd-ai-agent-copilot-tobi-doc-{instance}/work/quickstart.html"
+    cwd: "/tmp"
+    name: "seed quickstart.html fixture"
+  - run: "azd ai doc install skill --target copilot"
+    cwd: "/tmp/azd-ai-agent-copilot-tobi-doc-{instance}/work"
+    name: "install azd-ai-skill for copilot"
+
+notes: |
+  Same source prompts as tobi-first-turns.yaml (Tobi's UXR session in
+  logs/tobi.json) so results can be diffed against the 4-run baseline:
+  all 4 baseline Opus 4.7 (High) runs paused at turn 2 to ask for the
+  SharePoint site URL before scaffolding.
+
+  Difference: this run has the `azd ai doc` skill pack installed in the
+  work dir at .agents/skills/azd-ai-skill/, and turn 1 is amended with
+  a one-line hint telling Copilot CLI to consult it. Everything else
+  about the prompts is identical to the baseline.
+
+  Per AGENTS.md: do NOT verify Copilot's individual tool picks or
+  intermediate outputs — send the prompt and let the next prompt (or
+  the final state) surface any failure.
+
+goals:
+  - "Wait for the Copilot CLI prompt to be ready (look for the input box)."
+  - >
+    Send Tobi's first prompt (typos preserved), substituting the seeded
+    local file path for the original Windows file:/// URL and prepending
+    a one-line hint about the installed skill pack:
+    "Note: an `azd ai doc` skill pack is installed at
+    .agents/skills/azd-ai-skill/ — consult it (and run `azd ai doc ...`
+    subcommands) for any self-help you need while answering.
+
+    Look through the local file with the link {cwd}/quickstart.html,
+    highlght all the steps to create a new foundary project for me"
+  - "Wait for Copilot to finish reading the file and produce its summary
+     of the steps. Do not verify the content — just wait for the model
+     to return control to the prompt."
+  - >
+    Send Tobi's second prompt verbatim (typos preserved): "Using this
+    steps that you have highlight above, create a new agent that can
+    conect with sharepoint website to answer any question I may have,
+    if you can't find an answer, respond with \"I can't find that
+    information at this time\""
+  - "Wait for Copilot to finish creating the agent project files. Do
+     not intervene mid-stream even if it asks for confirmation —
+     `--allow-all-tools` should keep it moving."
+  - "Take a screenshot of the final terminal state."
+  - "Exit the Copilot session cleanly (Ctrl-C or /exit)."
+  - "Report any confusing UX, doc mismatches, dead ends, or differences
+     from the baseline tobi-first-turns.yaml runs."
+
+post:
+  - run: "ls -la /tmp/azd-ai-agent-copilot-tobi-doc-{instance}/work"
+    name: "list resulting files"
+    continue_on_error: true
+  - run: "rm -rf /tmp/azd-ai-agent-copilot-tobi-doc-{instance}"
+    name: "cleanup working dir"
+    continue_on_error: true

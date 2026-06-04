@@ -1,0 +1,72 @@
+# Scenario: simple web-search agent + azd ai doc skill available
+#
+# Same shape as scenarios/azd_ai_agent_copilot/web-search-agent.yaml,
+# but with the azd-ai-skill pack pre-installed into the work dir via
+# `azd ai doc install skill --target copilot` and a short note in
+# turn 1 pointing Copilot CLI at the skill so it knows to consult it.
+#
+# Hypothesis: with `azd ai doc` topics available, Copilot CLI should
+# discover Foundry's first-class web/Bing search options and either
+# self-recover or present a more informed multi-choice question than
+# the no-skill baseline.
+#
+# Compare to:
+#   - web-search-agent.yaml         (same shape, no skill)
+#   - tobi-first-turns-azd-ai-doc.yaml (same skill, SharePoint at turn 2)
+
+name: "web-search-agent-azd-ai-doc"
+command: "copilot --allow-all-tools --add-dir {cwd}"
+cwd: "/tmp/azd-ai-agent-copilot-web-search-doc-{instance}/work"
+
+pre:
+  - run: "rm -rf /tmp/azd-ai-agent-copilot-web-search-doc-{instance} && mkdir -p /tmp/azd-ai-agent-copilot-web-search-doc-{instance}/work"
+    cwd: "/tmp"
+    name: "prepare working dir"
+  - run: "cp ~/working/foundry-agents-uxr-wiki/raw/studies/hosted-agents-onboarding-ai-assisted/prototype-quickstart/quickstart.html /tmp/azd-ai-agent-copilot-web-search-doc-{instance}/work/quickstart.html"
+    cwd: "/tmp"
+    name: "seed quickstart.html fixture"
+  - run: "azd ai doc install skill --target copilot"
+    cwd: "/tmp/azd-ai-agent-copilot-web-search-doc-{instance}/work"
+    name: "install azd-ai-skill for copilot"
+
+notes: |
+  Same fixture file and turn shape as web-search-agent.yaml. The only
+  intentional variable vs. that scenario is the pre-installed skill
+  pack and a one-line hint in turn 1 telling Copilot CLI about it.
+
+  Per AGENTS.md: do NOT verify Copilot's individual tool picks or
+  intermediate outputs — send the prompt and let the next prompt (or
+  the final state) surface any failure.
+
+goals:
+  - "Wait for the Copilot CLI prompt to be ready (look for the input box)."
+  - >
+    Send turn 1 (with a one-line hint about the installed skill pack
+    prepended): "Note: an `azd ai doc` skill pack is installed at
+    .agents/skills/azd-ai-skill/ — consult it (and run `azd ai doc ...`
+    subcommands) for any self-help you need while answering.
+
+    Look through the local file at {cwd}/quickstart.html and highlight
+    all the steps to create a new Foundry project for me."
+  - "Wait for Copilot to finish reading the file and produce its summary
+     of the steps. Do not verify the content — just wait for the model
+     to return control to the prompt."
+  - >
+    Send turn 2: "Using those steps, create a new agent that can do
+    web search to answer any question I may have. If it can't find an
+    answer, respond with \"I can't find that information at this time\""
+  - "Wait for Copilot to finish creating the agent project files. Do
+     not intervene mid-stream even if it asks for confirmation —
+     `--allow-all-tools` should keep it moving."
+  - "Take a screenshot of the final terminal state."
+  - "Exit the Copilot session cleanly (Ctrl-C or /exit)."
+  - "Report any confusing UX, doc mismatches, dead ends, or interesting
+     differences vs. web-search-agent.yaml (no skill)."
+
+post:
+  - run: "ls -la /tmp/azd-ai-agent-copilot-web-search-doc-{instance}/work"
+    name: "list resulting files"
+    continue_on_error: true
+  - run: "rm -rf /tmp/azd-ai-agent-copilot-web-search-doc-{instance}"
+    name: "cleanup working dir"
+    continue_on_error: true

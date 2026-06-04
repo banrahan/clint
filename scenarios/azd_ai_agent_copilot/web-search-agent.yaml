@@ -1,0 +1,64 @@
+# Scenario: simple web-search agent (Tobi-style two-turn riff)
+#
+# Same shape as scenarios/azd_ai_agent_copilot/tobi-first-turns.yaml —
+# read the local quickstart.html, summarize the steps to create a new
+# Foundry project, then use those steps to scaffold a small agent —
+# only this time the agent's job is web search instead of SharePoint
+# Q&A. The fallback phrase is preserved verbatim for parallelism with
+# the Tobi scenario so behavior is easy to diff.
+#
+# This is a *synthetic* scenario (not replaying a real UXR transcript),
+# so the prompts read cleanly rather than reproducing participant typos.
+
+name: "web-search-agent"
+command: "copilot --allow-all-tools --add-dir {cwd}"
+cwd: "/tmp/azd-ai-agent-copilot-web-search-{instance}/work"
+
+pre:
+  - run: "rm -rf /tmp/azd-ai-agent-copilot-web-search-{instance} && mkdir -p /tmp/azd-ai-agent-copilot-web-search-{instance}/work"
+    cwd: "/tmp"
+    name: "prepare working dir"
+  - run: "cp ~/working/foundry-agents-uxr-wiki/raw/studies/hosted-agents-onboarding-ai-assisted/prototype-quickstart/quickstart.html /tmp/azd-ai-agent-copilot-web-search-{instance}/work/quickstart.html"
+    cwd: "/tmp"
+    name: "seed quickstart.html fixture"
+
+notes: |
+  Same fixture file as the Tobi scenario so the only intentional
+  variable across runs is the turn-2 ask (web search vs. SharePoint).
+
+  Per AGENTS.md: do NOT verify Copilot's individual tool picks or
+  intermediate outputs — send the prompt and let the next prompt (or
+  the final state) surface any failure.
+
+  Compare to:
+    - tobi-first-turns.yaml          (same shape, SharePoint at turn 2)
+    - web-search-agent-azd-ai-doc.yaml (same shape, with the azd-ai-skill
+                                        pre-installed in the work dir)
+
+goals:
+  - "Wait for the Copilot CLI prompt to be ready (look for the input box)."
+  - >
+    Send turn 1: "Look through the local file at {cwd}/quickstart.html
+    and highlight all the steps to create a new Foundry project for me."
+  - "Wait for Copilot to finish reading the file and produce its summary
+     of the steps. Do not verify the content — just wait for the model
+     to return control to the prompt."
+  - >
+    Send turn 2: "Using those steps, create a new agent that can do
+    web search to answer any question I may have. If it can't find an
+    answer, respond with \"I can't find that information at this time\""
+  - "Wait for Copilot to finish creating the agent project files. Do
+     not intervene mid-stream even if it asks for confirmation —
+     `--allow-all-tools` should keep it moving."
+  - "Take a screenshot of the final terminal state."
+  - "Exit the Copilot session cleanly (Ctrl-C or /exit)."
+  - "Report any confusing UX, doc mismatches, dead ends, or interesting
+     differences vs. the SharePoint variant (tobi-first-turns.yaml)."
+
+post:
+  - run: "ls -la /tmp/azd-ai-agent-copilot-web-search-{instance}/work"
+    name: "list resulting files"
+    continue_on_error: true
+  - run: "rm -rf /tmp/azd-ai-agent-copilot-web-search-{instance}"
+    name: "cleanup working dir"
+    continue_on_error: true

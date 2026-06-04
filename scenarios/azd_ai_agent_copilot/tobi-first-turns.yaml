@@ -1,0 +1,72 @@
+# Scenario: Tobi's first two turns (replayed in Copilot CLI)
+#
+# Reproduces the opening of the UXR session logged in
+# logs/tobi.json — where a participant asked VS Code Copilot to (1) read
+# a local quickstart.html and highlight steps to create a Foundry
+# project, then (2) use those steps to build a SharePoint-connected
+# agent with a specific "I can't find that information at this time"
+# fallback.
+#
+# This scenario drives the same flow through the GitHub Copilot CLI
+# (instead of VS Code Copilot) so we can compare behavior between the
+# two clients on identical prompts.
+#
+# `--allow-all-tools` keeps the run non-interactive (no shell/file
+# permission prompts); `--add-dir` scopes file access to the per-instance
+# working dir, which already contains the seeded quickstart.html.
+
+name: "tobi-first-turns"
+command: "copilot --allow-all-tools --add-dir {cwd}"
+cwd: "/tmp/azd-ai-agent-copilot-tobi-{instance}/work"
+
+pre:
+  - run: "rm -rf /tmp/azd-ai-agent-copilot-tobi-{instance} && mkdir -p /tmp/azd-ai-agent-copilot-tobi-{instance}/work"
+    cwd: "/tmp"
+    name: "prepare working dir"
+  - run: "cp ~/working/foundry-agents-uxr-wiki/raw/studies/hosted-agents-onboarding-ai-assisted/prototype-quickstart/quickstart.html /tmp/azd-ai-agent-copilot-tobi-{instance}/work/quickstart.html"
+    cwd: "/tmp"
+    name: "seed quickstart.html fixture"
+
+notes: |
+  Tobi's original prompts referenced a Windows file:/// URL. Since this
+  runs on POSIX, the seeded fixture lives at {cwd}/quickstart.html and
+  the prompts below use that path. Keep the prompt wording (including
+  typos) close to the original so behavior is comparable to the VS Code
+  Copilot transcript in logs/tobi.json.
+
+  Per AGENTS.md: do NOT verify Copilot's individual tool picks or
+  intermediate outputs — send the prompt and let the next prompt (or
+  the final state) surface any failure. The whole point of this
+  scenario is to see what Copilot CLI does unaided on the same inputs.
+
+goals:
+  - "Wait for the Copilot CLI prompt to be ready (look for the input box)."
+  - >
+    Send Tobi's first prompt verbatim (typos preserved), substituting
+    the seeded local file path for the original Windows file:/// URL:
+    "Look through the local file with the link {cwd}/quickstart.html,
+    highlght all the steps to create a new foundary project for me"
+  - "Wait for Copilot to finish reading the file and produce its summary
+     of the steps. Do not verify the content — just wait for the model
+     to return control to the prompt."
+  - >
+    Send Tobi's second prompt verbatim (typos preserved): "Using this
+    steps that you have highlight above, create a new agent that can
+    conect with sharepoint website to answer any question I may have,
+    if you can't find an answer, respond with \"I can't find that
+    information at this time\""
+  - "Wait for Copilot to finish creating the agent project files. Do
+     not intervene mid-stream even if it asks for confirmation —
+     `--allow-all-tools` should keep it moving."
+  - "Take a screenshot of the final terminal state."
+  - "Exit the Copilot session cleanly (Ctrl-C or /exit)."
+  - "Report any confusing UX, doc mismatches, dead ends, or differences
+     from the VS Code Copilot transcript in logs/tobi.json."
+
+post:
+  - run: "ls -la /tmp/azd-ai-agent-copilot-tobi-{instance}/work"
+    name: "list resulting files"
+    continue_on_error: true
+  - run: "rm -rf /tmp/azd-ai-agent-copilot-tobi-{instance}"
+    name: "cleanup working dir"
+    continue_on_error: true
