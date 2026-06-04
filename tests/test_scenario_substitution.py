@@ -152,3 +152,127 @@ command: "echo {agent}"
     pool2 = ports.get_pool(scenario, ["agent"])
     assert pool is pool2
     assert vars_dict["agent"] == pool.get("agent")
+
+
+def test_load_scenario_substitutes_cwd_in_command(tmp_path):
+    """{cwd} in command/goals resolves to the scenario's resolved cwd
+    (including any {instance} expansion)."""
+    scenario = _write_scenario(
+        tmp_path,
+        """
+name: needs-cwd
+command: "copilot --add-dir {cwd}"
+cwd: "/tmp/work-{instance}"
+goals:
+  - "Run inside {cwd}"
+""",
+    )
+    out = mcp_server._read_scenario_file(scenario)
+    assert "--add-dir /tmp/work-main" in out
+    assert "Run inside /tmp/work-main" in out
+    assert "{cwd}" not in out
+
+
+def test_run_phase_substitutes_cwd_in_hook(tmp_path, monkeypatch):
+    scenario = _write_scenario(
+        tmp_path,
+        """
+name: hook-cwd
+command: "echo hi"
+cwd: "/tmp/work-{instance}"
+pre:
+  - "mkdir -p {cwd}"
+""",
+    )
+
+    captured = {}
+
+    from auto_test_tool import hooks as hooks_mod
+
+    def fake_execute(hook_list):
+        captured["hooks"] = list(hook_list)
+        return [hooks_mod.HookResult(hook=h, exit_code=0) for h in hook_list]
+
+    monkeypatch.setattr(mcp_server, "execute_hooks", fake_execute)
+
+    mcp_server._run_phase(scenario, "pre")
+    assert captured["hooks"][0].run == "mkdir -p /tmp/work-main"
+
+
+def test_start_session_substitutes_cwd_in_command(tmp_path, monkeypatch):
+    """start_session should expose the resolved cwd as {cwd} for the command."""
+    captured = {}
+
+    class FakeSession:
+        def __init__(self, *, command, cwd, env, output_dir, run_name, session_id):
+            captured["command"] = command
+            captured["cwd"] = cwd
+            captured["env"] = env
+            self.cwd = cwd
+            self.run_dir = "/tmp/fake"
+
+        def start(self):
+            return "(fake terminal)"
+
+    monkeypatch.setattr(mcp_server, "AgentSession", FakeSession)
+    monkeypatch.setattr(mcp_server, "tmux_is_installed", lambda: True)
+    # Isolate session registry so we don't collide with other tests.
+    monkeypatch.setattr(mcp_server, "_sessions", {})
+    monkeypatch.setattr(mcp_server, "_session_scenarios", {})
+
+    scenario = _write_scenario(
+        tmp_path,
+        """
+name: cwd-in-command
+command: "copilot --add-dir {cwd}"
+cwd: "/tmp/work-{instance}"
+""",
+    )
+
+    out = mcp_server.start_session(
+        command="copilot --add-dir {cwd}",
+        cwd="/tmp/work-{instance}",
+        scenario_path=scenario,
+        session_id="t-cwd",
+    )
+    assert "ERROR" not in out
+    assert captured["command"] == "copilot --add-dir /tmp/work-main"
+    assert captured["cwd"] == "/tmp/work-main"
+
+
+def test_start_session_explicit_cwd_var_overrides(tmp_path, monkeypatch):
+    """If the caller passes session_vars['cwd'], it wins over the resolved cwd."""
+    captured = {}
+
+    class FakeSession:
+        def __init__(self, *, command, cwd, env, output_dir, run_name, session_id):
+            captured["command"] = command
+            captured["cwd"] = cwd
+            self.cwd = cwd
+            self.run_dir = "/tmp/fake"
+
+        def start(self):
+            return "(fake terminal)"
+
+    monkeypatch.setattr(mcp_server, "AgentSession", FakeSession)
+    monkeypatch.setattr(mcp_server, "tmux_is_installed", lambda: True)
+    monkeypatch.setattr(mcp_server, "_sessions", {})
+    monkeypatch.setattr(mcp_server, "_session_scenarios", {})
+
+    scenario = _write_scenario(
+        tmp_path,
+        """
+name: cwd-override
+command: "echo {cwd}"
+cwd: "/tmp/resolved"
+""",
+    )
+
+    mcp_server.start_session(
+        command="echo {cwd}",
+        cwd="/tmp/resolved",
+        scenario_path=scenario,
+        session_id="t-cwd-override",
+        session_vars={"cwd": "/explicit/override"},
+    )
+    assert captured["command"] == "echo /explicit/override"

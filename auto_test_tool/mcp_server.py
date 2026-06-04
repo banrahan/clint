@@ -177,8 +177,13 @@ def start_session(
 
     try:
         vars_dict, pool = _resolve_vars(scenario_path, session_vars, instance_id)
-        resolved_command = substitute_template(command, vars_dict)
+        # Resolve cwd first (using base vars like {instance}/{port}) so we can
+        # expose it as {cwd} to command/env. Explicit session_vars["cwd"] still
+        # wins because vars_dict was built before we get here.
         resolved_cwd = substitute_template(cwd, vars_dict) if cwd else cwd
+        if resolved_cwd is not None:
+            vars_dict.setdefault("cwd", resolved_cwd)
+        resolved_command = substitute_template(command, vars_dict)
         resolved_env = substitute_in_mapping(env or {}, vars_dict)
     except KeyError as e:
         return f"ERROR: {e}"
@@ -488,6 +493,14 @@ def _run_phase(scenario_path: str, phase: str, instance_id: str | None = None) -
     # using the scenario's shared port pool. Substitution happens at this
     # boundary so hooks.py stays agnostic of scenario-level concerns.
     vars_dict, _ = _resolve_vars(scenario_path, None, instance_id)
+    # Expose the scenario's resolved cwd as {cwd} so hooks can reference the
+    # same working directory the session will run in.
+    scenario_cwd = data.get("cwd")
+    if scenario_cwd:
+        try:
+            vars_dict.setdefault("cwd", substitute_template(scenario_cwd, vars_dict))
+        except KeyError:
+            pass
     try:
         resolved: list[Hook] = []
         for h in hooks:
@@ -522,6 +535,15 @@ def _read_scenario_file(path: str) -> str:
         vars_dict, pool = _resolve_vars(path, None, None)
     except ValueError as e:
         return f"ERROR: Invalid allocate_ports: {e}"
+
+    # Expose the scenario's cwd as {cwd} so display matches what start_session
+    # will produce.
+    scenario_cwd = data.get("cwd")
+    if scenario_cwd:
+        try:
+            vars_dict.setdefault("cwd", substitute_template(scenario_cwd, vars_dict))
+        except KeyError:
+            pass
 
     def sub(s: object) -> str:
         if not isinstance(s, str):

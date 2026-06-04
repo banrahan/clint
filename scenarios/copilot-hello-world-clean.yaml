@@ -1,0 +1,43 @@
+name: "copilot-hello-world-clean"
+# Same as copilot-hello-world, but launches Copilot against a brand-new
+# fake ~/.copilot/ by overriding HOME for the session. Use this to test
+# "first-run" behavior (no trust list, no MCP config, no session history).
+#
+# Note: on macOS the auth token lives in the keychain, so HOME override
+# does NOT log you out. On Linux you may need to seed an auth file.
+command: "copilot --allow-all-tools --add-dir {cwd}"
+cwd: "/tmp/copilot-hello-clean-{instance}/work"
+env:
+  HOME: "/tmp/copilot-hello-clean-{instance}/home"
+
+pre:
+  - run: "rm -rf /tmp/copilot-hello-clean-{instance} && mkdir -p /tmp/copilot-hello-clean-{instance}/home /tmp/copilot-hello-clean-{instance}/work"
+    cwd: "/tmp"
+    name: "prepare clean HOME + working dir"
+  - run: "ls -la /tmp/copilot-hello-clean-{instance}/home && echo '---' && ls -la /tmp/copilot-hello-clean-{instance}/home/.copilot 2>&1 || echo 'no .copilot yet (expected)'"
+    cwd: "/tmp"
+    name: "confirm HOME is empty"
+
+goals:
+  - "Confirm Copilot prompts for folder trust (because the fake HOME has no
+     trust list yet). Select 'Yes'."
+  - >
+    Send the input: "Create a file called hello.py in the current directory
+    that prints 'Hello, world!' when run. Just create the file and stop."
+  - "Wait for Copilot to report that hello.py was created."
+  - "Verify hello.py exists and prints 'Hello, world!' when run with python3
+     (check from the host, not inside Copilot)."
+  - "Verify ~/.copilot was created under the fake HOME, proving the run was
+     isolated from the real ~/.copilot."
+  - "Exit Copilot (Ctrl-C)."
+  - "Take a screenshot of the final terminal state."
+
+post:
+  - run: "ls -la /tmp/copilot-hello-clean-{instance}/home/.copilot 2>&1 || true"
+    cwd: "/tmp"
+    name: "show fake HOME contents after run"
+    continue_on_error: true
+  - run: "rm -rf /tmp/copilot-hello-clean-{instance}"
+    cwd: "/tmp"
+    name: "cleanup"
+    continue_on_error: true
