@@ -1,0 +1,38 @@
+# AUTO-AUTHORED: this first plan was hand-written from
+# scenarios/smoke-test.yaml to seed the CI workflow. Re-record via the
+# `record_plan` MCP tool when the source scenario changes.
+
+schema_version: 1
+name: smoke-test
+source_scenario: scenarios/smoke-test.yaml
+command: "echo 'Hello from auto-test-tool' && sleep 1 && echo 'Done'"
+cwd: "/tmp"
+env: {}
+allocate_ports: []
+pre: []
+post: []
+
+steps:
+  - index: 0
+    kind: start
+    assert:
+      contains:
+        - "Hello from auto-test-tool"
+      not_contains:
+        - "Traceback"
+        - "error:"
+      timeout_seconds: 10
+
+  - index: 1
+    kind: observe
+    assert:
+      contains:
+        - "Done"
+      not_contains:
+        - "Traceback"
+        - "error:"
+      timeout_seconds: 10
+
+  - index: 2
+    kind: screenshot
+    label: "final state"

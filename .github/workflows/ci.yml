@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel in-flight runs for the same ref when a new commit lands.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tmux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tmux
+          tmux -V
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pipx install uv
+
+      - name: Create venv and install
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python -e '.[dev]'
+
+      - name: Run pytest
+        run: .venv/bin/python -m pytest -q
+
+  # ----------------------------------------------------------------------
+  # Discover all `plans/*.plan.yaml` files and run each one as a separate
+  # matrix job so failures are isolated and parallelised.
+  # ----------------------------------------------------------------------
+  discover-plans:
+    name: Discover replay plans
+    runs-on: ubuntu-latest
+    outputs:
+      plans: ${{ steps.list.outputs.plans }}
+      empty: ${{ steps.list.outputs.empty }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        run: |
+          shopt -s nullglob
+          plans=(plans/*.plan.yaml)
+          if [ ${#plans[@]} -eq 0 ]; then
+            echo "plans=[]" >> "$GITHUB_OUTPUT"
+            echo "empty=true" >> "$GITHUB_OUTPUT"
+          else
+            json=$(printf '%s\n' "${plans[@]}" | jq -R . | jq -c -s .)
+            echo "plans=$json" >> "$GITHUB_OUTPUT"
+            echo "empty=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Discovered plans:" "${plans[@]}"
+
+  replay:
+    name: Replay ${{ matrix.plan }}
+    needs: discover-plans
+    if: needs.discover-plans.outputs.empty == 'false'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        plan: ${{ fromJson(needs.discover-plans.outputs.plans) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tmux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tmux
+          tmux -V
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pipx install uv
+
+      - name: Create venv and install
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python -e .
+
+      - name: Replay plan
+        run: .venv/bin/cli-tester-replay "${{ matrix.plan }}"
+
+      - name: Upload replay reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          # Slashes in the plan path are invalid in artifact names; replace.
+          name: replay-report-${{ strategy.job-index }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14

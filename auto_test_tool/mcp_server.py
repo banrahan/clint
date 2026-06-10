@@ -33,6 +33,7 @@ from .agent import AgentSession
 from .runner import tmux_is_installed
 from .hooks import Hook, execute_hooks, format_hook_results, parse_hooks
 from .ports import PortPool, get_pool, merged_vars, release_pool
+from .recorder import PlanRecorder
 from .template import substitute_in_mapping, substitute_template
 
 mcp = FastMCP(
@@ -64,6 +65,13 @@ _sessions: dict[str, AgentSession] = {}
 # Map session_id -> scenario_path so finish_session can refcount-release the
 # scenario's PortPool when the last session referencing it tears down.
 _session_scenarios: dict[str, str] = {}
+# Pending recorders keyed by session_id. ``record_plan`` populates this;
+# ``start_session`` consumes the entry (if any) and attaches the recorder
+# to the new AgentSession before calling ``start()``.
+_pending_recorders: dict[str, PlanRecorder] = {}
+# Active recorders keyed by session_id (so finish_session can report the
+# plan file path back to the caller).
+_active_recorders: dict[str, PlanRecorder] = {}
 
 
 def _get_session(session_id: str) -> AgentSession:
@@ -196,6 +204,20 @@ def start_session(
         run_name=run_name,
         session_id=session_id,
     )
+
+    # If record_plan was called for this session_id earlier, attach the
+    # recorder before start() so the initial capture is recorded too.
+    recorder = _pending_recorders.pop(session_id, None)
+    if recorder is not None:
+        if recorder.scenario_data is None and scenario_path:
+            _expanded, data, _err = _load_scenario_data(scenario_path)
+            if data is not None:
+                recorder.scenario_data = data
+        if recorder.source_scenario is None and scenario_path:
+            recorder.source_scenario = scenario_path
+        recorder.attach(session)
+        _active_recorders[session_id] = recorder
+
     initial_state = session.start()
     _sessions[session_id] = session
     if scenario_path:
@@ -383,12 +405,21 @@ def finish_session(session_id: str = "default") -> str:
     report_path = session.finish()
     del _sessions[session_id]
 
+    recorder = _active_recorders.pop(session_id, None)
+    plan_line = ""
+    if recorder is not None:
+        # finish() already triggered the recorder's wrapped flush; surface
+        # the resolved path so the caller knows where to commit it.
+        plan_target = recorder.plan_path or recorder._default_plan_path()
+        if plan_target:
+            plan_line = f"\nPlan written: {plan_target}"
+
     scenario_path = _session_scenarios.pop(session_id, None)
     # Refcount: release the pool only when no other active session is using it.
     if scenario_path and scenario_path not in _session_scenarios.values():
         release_pool(scenario_path)
 
-    return f"Session finished. Report: {report_path}"
+    return f"Session finished. Report: {report_path}{plan_line}"
 
 
 @mcp.tool()
@@ -409,6 +440,68 @@ def release_scenario_ports(scenario_path: str) -> str:
         f"Released port pool for {expanded}."
         if released
         else f"No port pool was registered for {expanded}."
+    )
+
+
+@mcp.tool()
+def record_plan(
+    plan_path: str | None = None,
+    scenario_path: str | None = None,
+    session_id: str = "default",
+    driver: str = "copilot-cli",
+) -> str:
+    """Arm the next ``start_session`` call to record a deterministic test plan.
+
+    Call this **before** ``start_session`` for the same ``session_id``.
+    When the session is started, a ``PlanRecorder`` attaches and captures
+    every ``act`` / ``observe`` / ``screenshot`` call into a YAML file
+    under ``plans/`` that the ``cli-tester-replay`` runner can re-execute
+    in CI without any LLM in the loop.
+
+    Args:
+        plan_path: Where to write the plan. Defaults to
+            ``plans/<scenario-stem>.plan.yaml`` when ``scenario_path`` is
+            provided; required otherwise.
+        scenario_path: Path to the source scenario YAML — used to pre-fill
+            ``allocate_ports`` / ``pre`` / ``post`` / ``name`` in the plan.
+        session_id: Which session this recording is for. Must match the
+            ``session_id`` passed to ``start_session``.
+        driver: Free-text label recorded in the plan header (e.g.
+            ``"copilot-cli"`` or your name). Default: ``copilot-cli``.
+
+    Returns:
+        Confirmation including the resolved plan path.
+    """
+    if session_id in _active_recorders:
+        return f"ERROR: Session '{session_id}' is already recording a plan."
+    if session_id in _pending_recorders:
+        return f"ERROR: A plan recording is already pending for session '{session_id}'."
+
+    scenario_data: dict | None = None
+    if scenario_path:
+        _expanded, data, err = _load_scenario_data(scenario_path)
+        if err:
+            return err
+        scenario_data = data
+
+    recorder = PlanRecorder(
+        source_scenario=scenario_path,
+        scenario_data=scenario_data,
+        plan_path=plan_path,
+        driver=driver,
+    )
+    resolved_path = plan_path or recorder._default_plan_path()
+    if not resolved_path:
+        return (
+            "ERROR: plan_path is required when scenario_path is not provided "
+            "(no way to derive a default plan filename)."
+        )
+    recorder.plan_path = resolved_path
+    _pending_recorders[session_id] = recorder
+    return (
+        f"Plan recording armed for session '{session_id}'.\n"
+        f"Plan will be written to: {resolved_path}\n"
+        f"Call start_session next; the recorder will attach automatically."
     )
 
 

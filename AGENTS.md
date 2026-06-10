@@ -96,6 +96,32 @@ file's verification rule was a 12-line silent-fallback bug that two
 retries would have repeated. Reading `agent.py` for ~30 seconds was
 the fastest path to a real fix.
 
+### Recording test plans (`record_plan` → `plans/*.plan.yaml`)
+
+The MCP exposes a `record_plan` tool that captures a driven session as
+a deterministic test plan under `plans/`. Replay (`cli-tester-replay`)
+re-executes plans in CI without an LLM. Conventions:
+
+* **Call `record_plan` before `start_session`**, not after — it sets a
+  pending recorder that attaches at session start so the initial
+  capture is recorded too.
+* **Drive the scenario normally** with `observe`/`send_action`/
+  `screenshot` — every call is recorded. Do not change your driving
+  style just because you're recording; the goal is to capture what a
+  realistic run looks like.
+* **Trim the generated `contains` lines before committing.** The
+  recorder auto-seeds with the last 3 non-noise lines of each step's
+  capture. Many of those are incidental; keep only the assertions
+  that matter, and delete the entire `assert:` block on pure waits or
+  screenshots where presence isn't meaningful.
+* **Plans are checked-in test fixtures.** Treat plan diffs in PRs the
+  same way you'd treat snapshot test updates — review them, don't
+  rubber-stamp.
+* **If a replay fails in CI**, the fix is one of: re-record (UI
+  legitimately changed → commit the diff), or surface a real
+  regression in the CLI under test. Never relax assertions just to
+  make CI green.
+
 ---
 
 ## Working on this repo

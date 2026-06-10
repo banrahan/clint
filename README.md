@@ -484,6 +484,135 @@ Open `report.html` in a browser to review the test run.
 - **Describe error handling**: "If prompted about an existing manifest, confirm yes"
 - **Take screenshots at key moments**: Include "take a screenshot" in your prompt to Copilot CLI
 
+## Running in CI (record-and-replay)
+
+The interactive flow above needs a human + Copilot CLI in the loop. To
+gate PRs, the repo also supports **deterministic record-and-replay**:
+
+1. Author a scenario as usual (`scenarios/<name>.yaml`).
+2. Drive it once interactively with the new `record_plan` MCP tool —
+   the session emits a self-contained YAML "test plan" under
+   `plans/<name>.plan.yaml`.
+3. Review/trim the plan and commit it. CI re-executes it deterministically
+   on every PR using `cli-tester-replay` — no LLM, no API keys, no flake.
+
+### Recording a plan
+
+From an interactive Copilot CLI session (after the MCP server is
+registered and restarted to pick up new tools):
+
+```
+Use cli-interactive-tester. Call record_plan with
+  scenario_path='scenarios/smoke-test.yaml'
+then drive scenarios/smoke-test.yaml end-to-end with start_session,
+observe, send_action, screenshot, finish_session. The plan will be
+written to plans/smoke-test.plan.yaml automatically.
+```
+
+The `record_plan` tool accepts:
+
+| Parameter | Description |
+|-----------|-------------|
+| `plan_path` | Where to write the plan. Defaults to `plans/<scenario-stem>.plan.yaml`. |
+| `scenario_path` | Source scenario YAML — used to seed `name`, `pre`, `post`, `allocate_ports`. |
+| `session_id` | Which session this recording is for (must match the `session_id` passed to `start_session`). |
+| `driver` | Free-text label recorded in the plan header (default `copilot-cli`). |
+
+The recorder auto-seeds each step with:
+
+- `contains:` — last 3 non-empty, non-noise lines of the post-step
+  capture (delta-aware vs. the previous capture).
+- `not_contains:` — `["Traceback", "error:"]` as a safety net.
+- `timeout_seconds:` — 10s (bumped to 30s if `observe()` polled longer
+  than 5s during recording).
+
+**Trim the `contains` lines down to the meaningful assertions before
+committing.** The recorder's output is a strong first draft, not a
+finished test.
+
+### Plan schema (v1)
+
+```yaml
+schema_version: 1
+name: smoke-test
+source_scenario: scenarios/smoke-test.yaml
+command: "echo 'Hello' && echo 'Done'"
+cwd: "/tmp"
+env: {}
+allocate_ports: []
+pre: []
+post: []
+
+steps:
+  - index: 0
+    kind: start                 # captured after AgentSession.start()
+    assert:
+      contains: ["Hello"]
+      not_contains: ["Traceback"]
+      timeout_seconds: 10
+
+  - index: 1
+    kind: action                # one driver-initiated act() call
+    action: { action: "select", choice_text: "Python" }
+    assert:
+      contains: ["Selected Python"]
+      timeout_seconds: 10
+
+  - index: 2
+    kind: observe               # explicit post-action check
+    assert:
+      contains: ["Done"]
+      session_exited: true
+
+  - index: 3
+    kind: screenshot            # SVG written to reports/, no assertions
+    label: "final state"
+```
+
+Step kinds: `start`, `action`, `observe`, `screenshot`.
+Assertion vocabulary: `contains`, `not_contains`, `regex`,
+`session_exited`, `timeout_seconds`. Replay is **fail-fast** — the
+first failing step ends the run with a non-zero exit code, but
+`finish_session` and `post` hooks always execute so CI artifacts are
+intact.
+
+### Replaying locally
+
+```bash
+.venv/bin/cli-tester-replay plans/smoke-test.plan.yaml
+echo $?    # 0 = pass, 1 = assertion failed, 2 = usage / plan-load error
+```
+
+The HTML report + SVG screenshots land under
+`reports/replay_<plan>_<timestamp>/` just like interactive runs.
+
+### CI workflow contract
+
+`.github/workflows/ci.yml` runs on every push and PR with two jobs on
+`ubuntu-latest`:
+
+1. **Unit tests** — `pytest -q`. Hermetic; no tmux interaction.
+2. **Replay** — discovers `plans/*.plan.yaml`, fans out one matrix job
+   per plan, installs `tmux`, runs `cli-tester-replay <plan>`. On
+   failure, uploads `reports/**` as an artifact for inspection.
+
+No secrets are required for v1. Scenarios that need cloud credentials
+(e.g. `azd` commands that hit Azure) intentionally do **not** have
+plans committed and stay out of the matrix until we add an auth design.
+
+### When a plan fails in CI
+
+A failure means one of two things:
+
+- The target CLI's UI legitimately changed → re-record the plan, review
+  the diff alongside the code change.
+- The replay surfaced a real regression in the CLI under test → that's
+  the whole point. Read the failing capture from the uploaded
+  `reports/**` artifact.
+
+Don't paper over failures by relaxing assertions just to make CI green
+— that defeats the regression-detection value.
+
 ## Troubleshooting
 
 | Problem | Fix |
@@ -493,3 +622,4 @@ Open `report.html` in a browser to review the test run.
 | "No active session" | Call `start_session` before `observe`/`send_action` |
 | Terminal shows old state | Call `observe` — it waits for content to change |
 | Stuck on a prompt | The `send_action` wait type can pause; or try a `select` with `choice_index: 0` to accept the highlighted default |
+| `record_plan` not found by Copilot CLI | Restart your Copilot CLI session — FastMCP captures tool schemas at server startup; new tools aren't visible to an in-flight session. |

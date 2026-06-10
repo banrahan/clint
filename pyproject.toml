@@ -16,6 +16,7 @@ dev = [
 
 [project.scripts]
 azd-test-mcp = "auto_test_tool.mcp_server:main"
+cli-tester-replay = "auto_test_tool.replay:main"
 
 [tool.setuptools.packages.find]
 include = ["auto_test_tool*"]
