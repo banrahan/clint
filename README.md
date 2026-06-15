@@ -520,11 +520,20 @@ The `record_plan` tool accepts:
 
 The recorder auto-seeds each step with:
 
-- `contains:` — last 3 non-empty, non-noise lines of the post-step
-  capture (delta-aware vs. the previous capture).
+- `contains:` — last 3 non-empty, non-noise lines of the **settled**
+  capture, taken at the moment the next recordable event happens
+  (next action, next user-level screenshot, or `finish()`). Because
+  the capture is delayed until the next event, transient UI chrome
+  (spinners, "Loading…" text) that was visible in the brief
+  post-keystroke window has typically already disappeared. The seed
+  is delta-aware vs. the previous step's settled capture.
 - `not_contains:` — `["Traceback", "error:"]` as a safety net.
 - `timeout_seconds:` — 10s (bumped to 30s if `observe()` polled longer
   than 5s during recording).
+
+For the trailing step (no follow-up action to gate on), the recorder
+runs a short settle loop on `finish()` — polls tmux until two
+consecutive captures match — to obtain a stable seed.
 
 **Trim the `contains` lines down to the meaningful assertions before
 committing.** The recorder's output is a strong first draft, not a

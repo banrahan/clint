@@ -39,7 +39,7 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
@@ -289,8 +289,18 @@ def replay(
     plan: Plan,
     output_dir: str = "reports",
     run_name: str | None = None,
+    on_step: "Callable[[StepOutcome], None] | None" = None,
 ) -> ReplayResult:
-    """Execute a plan against AgentSession. Returns structured outcome."""
+    """Execute a plan against AgentSession. Returns structured outcome.
+
+    Args:
+        plan: The parsed plan to execute.
+        output_dir: Where to write the HTML report + screenshots.
+        run_name: Name of the sub-folder under ``output_dir``.
+        on_step: Optional callback fired after each step completes with
+            its :class:`StepOutcome`. Used by the CLI to stream PASS/FAIL
+            lines as the replay runs rather than dumping them all at end.
+    """
     pool = parse_allocate_ports(plan.allocate_ports)
     plan = _resolve_plan_strings(plan, pool)
 
@@ -334,46 +344,49 @@ def replay(
             start = time.time()
             try:
                 current_capture = _execute_step(session, step, current_capture)
-                outcomes.append(
-                    StepOutcome(
-                        index=step.index,
-                        kind=step.kind,
-                        success=True,
-                        elapsed_seconds=time.time() - start,
-                    )
+                outcome = StepOutcome(
+                    index=step.index,
+                    kind=step.kind,
+                    success=True,
+                    elapsed_seconds=time.time() - start,
                 )
+                outcomes.append(outcome)
+                if on_step is not None:
+                    on_step(outcome)
             except AssertionFailure as e:
-                outcomes.append(
-                    StepOutcome(
-                        index=step.index,
-                        kind=step.kind,
-                        success=False,
-                        error=str(e),
-                        elapsed_seconds=time.time() - start,
-                    )
+                outcome = StepOutcome(
+                    index=step.index,
+                    kind=step.kind,
+                    success=False,
+                    error=str(e),
+                    elapsed_seconds=time.time() - start,
                 )
+                outcomes.append(outcome)
                 overall_success = False
                 # Capture the failing state so CI artifacts show what we saw.
                 try:
                     session.screenshot(label=f"FAIL step {step.index} ({step.kind})")
                 except Exception:
                     pass
+                if on_step is not None:
+                    on_step(outcome)
                 break  # fail-fast
             except Exception as e:
-                outcomes.append(
-                    StepOutcome(
-                        index=step.index,
-                        kind=step.kind,
-                        success=False,
-                        error=f"unexpected error: {e}",
-                        elapsed_seconds=time.time() - start,
-                    )
+                outcome = StepOutcome(
+                    index=step.index,
+                    kind=step.kind,
+                    success=False,
+                    error=f"unexpected error: {e}",
+                    elapsed_seconds=time.time() - start,
                 )
+                outcomes.append(outcome)
                 overall_success = False
                 try:
                     session.screenshot(label=f"ERROR step {step.index}")
                 except Exception:
                     pass
+                if on_step is not None:
+                    on_step(outcome)
                 break
     finally:
         session.result.success = overall_success
@@ -455,29 +468,50 @@ def _execute_step(
 # ---------------------------------------------------------------------------
 
 
-def _format_summary(plan: Plan, result: ReplayResult) -> str:
+def _format_header(plan: Plan) -> str:
     lines = [f"Plan: {plan.name}"]
     if plan.source_scenario:
         lines.append(f"Source scenario: {plan.source_scenario}")
     lines.append(f"Steps: {len(plan.steps)}")
-    if result.pre_summary:
-        lines.append("")
-        lines.append(result.pre_summary)
-    for o in result.outcomes:
-        marker = "PASS" if o.success else "FAIL"
-        lines.append(f"  [{marker}] step {o.index} ({o.kind}) — {o.elapsed_seconds:.2f}s")
-        if not o.success and o.error:
-            for err_line in o.error.splitlines():
-                lines.append(f"        {err_line}")
+    return "\n".join(lines)
+
+
+def _format_step_line(o: StepOutcome) -> list[str]:
+    marker = "PASS" if o.success else "FAIL"
+    out = [f"  [{marker}] step {o.index} ({o.kind}) — {o.elapsed_seconds:.2f}s"]
+    if not o.success and o.error:
+        for err_line in o.error.splitlines():
+            out.append(f"        {err_line}")
+    return out
+
+
+def _format_trailer(plan: Plan, result: ReplayResult) -> str:
+    lines: list[str] = []
     if result.post_summary:
         lines.append("")
         lines.append(result.post_summary)
-    if result.report_path:
-        lines.append("")
-        lines.append(f"Report: {result.report_path}")
+    # NB: ``generate_html_report`` already prints "📄 Report: <path>" to
+    # stderr inside ``session.finish()``. We deliberately don't re-print
+    # the path here so streaming output shows it exactly once.
     lines.append("")
     lines.append(f"Overall: {'PASS' if result.success else 'FAIL'}")
     return "\n".join(lines)
+
+
+def _format_summary(plan: Plan, result: ReplayResult) -> str:
+    """Render the full plan run as a single block.
+
+    Retained for tests and programmatic use. The CLI streams the
+    equivalent output incrementally instead of calling this.
+    """
+    parts = [_format_header(plan)]
+    if result.pre_summary:
+        parts.append("")
+        parts.append(result.pre_summary)
+    for o in result.outcomes:
+        parts.extend(_format_step_line(o))
+    parts.append(_format_trailer(plan, result))
+    return "\n".join(parts)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -508,8 +542,26 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
 
-    result = replay(plan, output_dir=args.output_dir, run_name=args.run_name)
-    print(_format_summary(plan, result))
+    # Print plan header before any steps start, so the user sees what's
+    # about to run while replay sets up tmux / fires hooks.
+    print(_format_header(plan), flush=True)
+
+    def _on_step(o: StepOutcome) -> None:
+        for line in _format_step_line(o):
+            print(line, flush=True)
+
+    result = replay(
+        plan,
+        output_dir=args.output_dir,
+        run_name=args.run_name,
+        on_step=_on_step,
+    )
+    # Pre-hook summary (if any) gets buffered into result; print it now
+    # in front of the trailer so order is: header → steps → pre/post → overall.
+    if result.pre_summary:
+        print("", flush=True)
+        print(result.pre_summary, flush=True)
+    print(_format_trailer(plan, result), flush=True)
     return 0 if result.success else 1
 
 

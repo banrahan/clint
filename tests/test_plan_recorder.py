@@ -209,3 +209,110 @@ def test_recorder_marks_session_exited_when_capture_has_marker(
     # The marker text should not leak into seeded contains.
     for needle in action_step["assert"].get("contains", []):
         assert "SESSION EXITED" not in needle
+
+
+def test_recorder_seeds_from_settled_capture_not_post_action_transient(
+    patch_tmux_for_session, tmp_path
+):
+    """The seed capture for step N is taken right before step N+1 runs,
+    so transient text that AgentSession.observe() may have grabbed
+    immediately post-action (e.g. a "Loading..." spinner) is gone by
+    seeding time and does NOT appear in `contains`.
+
+    Capture pop ordering (FakeTmux pops one per call until 1 left):
+      1. start() -> session.observe()         (welcome / first prompt)
+      2. recorder pre-act#1 _capture_text_now (settled first prompt)
+      3. act#1 internal screenshot (ANSI)     (ignored for seeding)
+      4. act#1 post-keys observe()            (TRANSIENT: "Loading...")
+      5. recorder pre-act#2 _capture_text_now (SETTLED: spinner gone)
+      6. act#2 internal screenshot
+      7. act#2 post-keys observe()            (final state)
+      8. finish() settle loop reads (returns the last padded value)
+    """
+    captures = [
+        "Welcome\n? Pick a flavor:\n> Vanilla\n  Chocolate",   # 1: start observe
+        "Welcome\n? Pick a flavor:\n> Vanilla\n  Chocolate",   # 2: settled
+        "Welcome\n? Pick a flavor:\n> Vanilla\n  Chocolate",   # 3: act1 ANSI
+        # Post-act#1: a transient spinner is on screen
+        "? Pick a model:\nLoading models...\n  spinner",       # 4: transient
+        # By the time the driver calls act#2, the spinner is gone:
+        "? Pick a model:\n> gpt-4\n  gpt-3",                   # 5: SETTLED
+        "? Pick a model:\n> gpt-4\n  gpt-3",                   # 6: act2 ANSI
+        "All done!",                                            # 7: act2 observe
+        "All done!",                                            # 8+: settle loop
+    ]
+    patch_tmux_for_session(captures)
+
+    plan_path = tmp_path / "transient.plan.yaml"
+    session = AgentSession(
+        command="fake-cli",
+        cwd=str(tmp_path),
+        output_dir=str(tmp_path / "reports"),
+        run_name="t",
+    )
+    recorder = PlanRecorder(
+        source_scenario="scenarios/transient.yaml",
+        plan_path=str(plan_path),
+    )
+    recorder.attach(session)
+
+    session.start()
+    session.act({"action": "select", "choice_index": 0})
+    session.act({"action": "select", "choice_index": 0})
+    session.finish()
+
+    plan = yaml.safe_load(plan_path.read_text())
+    steps = plan["steps"]
+    assert [s["kind"] for s in steps] == ["start", "action", "action"]
+
+    # Step 1 (first action) — its `contains` should describe the SETTLED
+    # state the driver saw before issuing act#2, not the spinner that
+    # was visible during the brief post-keystroke window.
+    act1_contains = steps[1]["assert"]["contains"]
+    joined = "\n".join(act1_contains)
+    assert "Loading models..." not in joined, (
+        "transient 'Loading models...' must NOT appear in seeded contains; "
+        f"got: {act1_contains}"
+    )
+    assert any("gpt-4" in line for line in act1_contains), (
+        f"settled menu line should appear in contains; got: {act1_contains}"
+    )
+
+
+def test_recorder_seeds_trailing_step_via_settle_loop(
+    patch_tmux_for_session, tmp_path, monkeypatch
+):
+    """When finish() runs and there's still a pending step (the most
+    common case — the last action has no follow-up), the recorder uses
+    a settle loop to obtain a stable capture for seeding."""
+    captures = [
+        "intro",         # 1: start observe
+        "intro",         # 2+: settle loop reads (stable)
+    ]
+    patch_tmux_for_session(captures)
+    # Make sleep a no-op so the settle loop runs at wall-clock zero.
+    # The fixture already patches agent_mod.time.sleep; patch the
+    # recorder module's time.sleep too.
+    from auto_test_tool import recorder as recorder_mod
+    monkeypatch.setattr(recorder_mod.time, "sleep", lambda *a, **kw: None)
+
+    plan_path = tmp_path / "trailing.plan.yaml"
+    session = AgentSession(
+        command="echo hi", cwd=str(tmp_path),
+        output_dir=str(tmp_path / "reports"), run_name="t",
+    )
+    recorder = PlanRecorder(
+        source_scenario="scenarios/trailing.yaml",
+        plan_path=str(plan_path),
+    )
+    recorder.attach(session)
+
+    session.start()
+    session.finish()
+
+    plan = yaml.safe_load(plan_path.read_text())
+    assert [s["kind"] for s in plan["steps"]] == ["start"]
+    start = plan["steps"][0]
+    # contains must have been seeded by the settle-loop branch in finish.
+    assert "intro" in start["assert"]["contains"]
+

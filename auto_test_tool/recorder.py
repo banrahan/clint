@@ -14,19 +14,28 @@ Design:
   pre-recorder code path. Detach by dropping the recorder; the
   wrapping is per-instance.
 
-* Auto-seeded assertions are deliberately a strong first draft, not a
-  final test. Defaults:
+* Auto-seeded assertions are a strong first draft, not a final test.
+  **Settle-then-capture seeding**: for each recorded step, the
+  ``contains`` list is seeded from a capture taken at the moment the
+  *next* recordable event happens (next action, next user-level
+  screenshot, or ``finish()``). At that point the UI has settled into
+  the steady state the next action operates on, so transient spinners
+  / "Loading..." chrome have already disappeared from the capture.
+  For the trailing step (no follow-up action), a short settle loop
+  polls tmux until two consecutive captures match.
 
-    contains      → last 3 non-empty, non-noise lines of the post-step
-                    pane capture (delta-aware: lines already present
-                    in the prior capture are skipped first)
+  Defaults:
+
+    contains      → last 3 non-empty, non-noise lines of the settled
+                    capture (delta-aware: lines already present in
+                    the previously-settled capture are skipped first)
     not_contains  → ["Traceback", "error:"] as a safety net
     timeout_seconds → 10 by default, bumped if the recorder noticed
                     ``observe()`` polling for longer than 5 seconds
 
-  The author is expected to trim ``contains`` down to the meaningful
-  lines after recording, and to delete the entire ``assert`` block on
-  steps where presence is enough (e.g. pure waits).
+  The author is still expected to trim ``contains`` to the meaningful
+  lines after recording, and to delete the ``assert`` block on steps
+  where presence is not meaningful (e.g. pure waits).
 
 * The plan is flushed on ``finish()``. If ``finish()`` is never called
   (e.g. the driver crashed) the recorder also flushes on ``__del__``
@@ -39,6 +48,7 @@ this module) and tagged with ``schema_version: 1``.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +56,7 @@ from typing import Any, Callable
 
 import yaml
 
+from . import agent as _agent_mod
 from .agent import AgentSession
 
 SCHEMA_VERSION = 1
@@ -54,8 +65,15 @@ DEFAULT_TIMEOUT_SECONDS = 10.0
 SLOW_OBSERVE_THRESHOLD = 5.0  # bump timeout_seconds when observe() took longer
 SLOW_OBSERVE_BUMP_TO = 30.0
 
+# Settle-loop parameters for the trailing step (no next action to gate on).
+SETTLE_POLL_SECONDS = 0.2
+SETTLE_MAX_WAIT_SECONDS = 2.0
+
 DEFAULT_NOT_CONTAINS = ["Traceback", "error:"]
 DEFAULT_CONTAINS_LINES = 3
+
+# Marker AgentSession.observe() prepends when the tmux session has died.
+SESSION_EXITED_MARKER = "[SESSION EXITED]\n"
 
 # Lines we skip when seeding `contains` because they're noise from the
 # shell / tmux frame rather than CLI output worth asserting on.
@@ -155,7 +173,14 @@ class PlanRecorder:
     _session: AgentSession | None = field(default=None, init=False)
     _steps: list[_RecordedStep] = field(default_factory=list, init=False)
     _flushed: bool = field(default=False, init=False)
-    _prev_capture: str = field(default="", init=False)
+    # The most recent step whose `contains` has not yet been seeded.
+    # Seeding happens when the *next* recordable event provides a
+    # settled capture (next action / next user-level screenshot /
+    # finish).
+    _pending_step: _RecordedStep | None = field(default=None, init=False)
+    # Settled capture of the step *before* `_pending_step`, used as
+    # the delta base when seeding `contains`.
+    _prev_settled_capture: str = field(default="", init=False)
     _last_observe_seconds: float = field(default=0.0, init=False)
     _in_act: bool = field(default=False, init=False)
     _orig_start: Callable | None = field(default=None, init=False)
@@ -202,12 +227,25 @@ class PlanRecorder:
     def _wrapped_start(self) -> str:
         assert self._orig_start is not None
         capture = self._orig_start()
-        self._record_capture("start", action=None, capture=capture)
+        # Defer seeding until the next recordable event provides a
+        # settled capture. Just create the step shell now.
+        session_exited = capture.startswith(SESSION_EXITED_MARKER)
+        step = _RecordedStep(
+            index=len(self._steps),
+            kind="start",
+            session_exited=session_exited or None,
+        )
+        self._steps.append(step)
+        self._pending_step = step
         return capture
 
     def _wrapped_act(self, action: dict) -> str:
         assert self._orig_act is not None
-        import time
+
+        # The driver is about to issue an action — the screen must be
+        # in the steady state the action operates on. Capture that NOW
+        # and use it to seed the previous step's `contains`.
+        self._seed_pending_step_from_now()
 
         before = time.time()
         # AgentSession.act() internally calls self.screenshot() before
@@ -221,16 +259,20 @@ class PlanRecorder:
             self._in_act = False
         elapsed = time.time() - before
         self._last_observe_seconds = elapsed
-        # Strip the [SESSION EXITED] marker the agent prepends so it doesn't
-        # leak into seeded `contains`; instead surface it as session_exited.
-        session_exited = capture.startswith("[SESSION EXITED]")
-        clean_capture = capture[len("[SESSION EXITED]\n"):] if session_exited else capture
-        self._record_capture(
-            "action",
+
+        # AgentSession.observe() prepends [SESSION EXITED] on dead sessions.
+        # Detect that for the assertion flag, but don't carry the marker
+        # into the seed capture (which is taken later anyway).
+        session_exited = capture.startswith(SESSION_EXITED_MARKER)
+
+        step = _RecordedStep(
+            index=len(self._steps),
+            kind="action",
             action=dict(action),
-            capture=clean_capture,
             session_exited=session_exited or None,
         )
+        self._steps.append(step)
+        self._pending_step = step
         return capture
 
     def _wrapped_screenshot(self, label: str = "") -> str:
@@ -241,45 +283,80 @@ class PlanRecorder:
             # double-record. The action itself will be recorded after the
             # keystrokes execute.
             return svg_path
+        # A user-level screenshot is also a "the prior step has settled"
+        # moment — seed the pending step before recording this one.
+        self._seed_pending_step_from_now()
         step = _RecordedStep(
             index=len(self._steps),
             kind="screenshot",
             label=label,
         )
         self._steps.append(step)
+        # Screenshots are no-assertion steps; don't make them pending.
         return svg_path
 
     def _wrapped_finish(self) -> str:
         assert self._orig_finish is not None
+        # Trailing step (if any) has no follow-up action to gate its
+        # settle on — run a short settle loop directly against tmux.
+        if self._pending_step is not None:
+            settled = self._settle_capture()
+            self._seed_pending_step_with(settled)
         try:
             return self._orig_finish()
         finally:
             self.flush()
 
     # ------------------------------------------------------------------
-    # Internals
+    # Settled-capture helpers
     # ------------------------------------------------------------------
-    def _record_capture(
-        self,
-        kind: str,
-        action: dict | None,
-        capture: str,
-        session_exited: bool | None = None,
-    ) -> None:
-        contains = _seed_contains(self._prev_capture, capture)
-        timeout = DEFAULT_TIMEOUT_SECONDS
+    def _capture_text_now(self) -> str:
+        """Read the current pane text directly from tmux.
+
+        Bypasses ``AgentSession.observe()`` so we don't mutate the
+        session's ``prev_capture`` state (which would affect how the
+        next ``act()`` waits for screen change).
+        """
+        sess = self._session
+        assert sess is not None
+        return _agent_mod.tmux_capture_pane(sess.session_name, with_ansi=False)
+
+    def _settle_capture(self) -> str:
+        """Poll the pane until two consecutive reads match, or timeout.
+
+        Used at ``finish()`` for the trailing step, which has no next
+        action to gate seeding on.
+        """
+        last = self._capture_text_now()
+        waited = 0.0
+        while waited < SETTLE_MAX_WAIT_SECONDS:
+            time.sleep(SETTLE_POLL_SECONDS)
+            waited += SETTLE_POLL_SECONDS
+            current = self._capture_text_now()
+            if current.strip() == last.strip():
+                return current
+            last = current
+        return last
+
+    def _seed_pending_step_from_now(self) -> None:
+        if self._pending_step is None:
+            return
+        capture = self._capture_text_now()
+        self._seed_pending_step_with(capture)
+
+    def _seed_pending_step_with(self, capture: str) -> None:
+        step = self._pending_step
+        if step is None:
+            return
+        # Defensive: strip session-exited marker if a caller passed one in.
+        clean = capture
+        if clean.startswith(SESSION_EXITED_MARKER):
+            clean = clean[len(SESSION_EXITED_MARKER):]
+        step.contains = _seed_contains(self._prev_settled_capture, clean)
         if self._last_observe_seconds > SLOW_OBSERVE_THRESHOLD:
-            timeout = SLOW_OBSERVE_BUMP_TO
-        step = _RecordedStep(
-            index=len(self._steps),
-            kind=kind,
-            action=action,
-            contains=contains,
-            timeout_seconds=timeout,
-            session_exited=session_exited,
-        )
-        self._steps.append(step)
-        self._prev_capture = capture
+            step.timeout_seconds = SLOW_OBSERVE_BUMP_TO
+        self._prev_settled_capture = clean
+        self._pending_step = None
 
     # ------------------------------------------------------------------
     # Flushing the plan
