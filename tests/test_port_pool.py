@@ -2,7 +2,7 @@ import socket
 
 import pytest
 
-from auto_test_tool.ports import (
+from clint.ports import (
     PortPool,
     allocate_free_port,
     get_pool,

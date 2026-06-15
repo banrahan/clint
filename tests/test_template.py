@@ -1,4 +1,4 @@
-from auto_test_tool.template import substitute_template, substitute_in_mapping
+from clint.template import substitute_template, substitute_in_mapping
 import pytest
 
 

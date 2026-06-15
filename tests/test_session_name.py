@@ -1,5 +1,5 @@
-from auto_test_tool.agent import AgentSession
-from auto_test_tool.runner import tmux_session_name, SESSION_PREFIX
+from clint.agent import AgentSession
+from clint.runner import tmux_session_name, SESSION_PREFIX
 
 
 def test_tmux_name_unique_per_call_without_suffix():

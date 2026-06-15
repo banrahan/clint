@@ -1,16 +1,21 @@
-# cli-interactive-tester
+# clint
 
-MCP server for Copilot CLI-driven testing of **any** interactive CLI flow.
+**CL**I **INT**eraction tester — drive and test *any* interactive CLI with goal-based scenarios, including AI coding assistants like **Copilot CLI**, **Claude Code**, and **Codex**.
 
-Instead of writing rigid test scripts with exact keystrokes, you write **goal-based scenarios** and let Copilot CLI figure out how to drive the terminal — just like Playwright MCP for browsers.
+Instead of brittle scripts with exact keystrokes, you write **goal-based** YAML scenarios and let an AI agent drive the terminal over MCP — like Playwright MCP, but for the command line. clint runs your CLI in tmux, observes the screen, decides the next action, and produces SVG screenshots + an HTML report.
+
+**Two ways people use clint:**
+
+- **Test your own interactive CLI** — wizards, prompts, pickers — end-to-end, without hard-coding keystrokes.
+- **Test AI-assisted CLI flows** — point a scenario at Copilot CLI, Claude Code, or Codex and assert the assistant actually completes the task (see [`scenarios/copilot-hello-world.yaml`](scenarios/copilot-hello-world.yaml)).
 
 ## How it works
 
 ```
-┌─────────────┐     MCP (stdio)     ┌──────────────────┐     tmux     ┌──────────┐
-│ Copilot CLI  │ ◄─────────────────► │  MCP Server      │ ◄──────────► │ Any CLI  │
-│ (reads YAML) │   tools/resources   │  (auto_test_tool) │  send-keys   │ (interactive)
-└─────────────┘                      └──────────────────┘  capture-pane └──────────┘
+┌──────────────┐    MCP (stdio)    ┌──────────────┐     tmux      ┌──────────────┐
+│  Copilot CLI │ ◄───────────────► │  MCP Server  │ ◄───────────► │   Any  CLI   │
+│ (reads YAML) │  tools/resources  │   (clint)    │   send-keys   │ (interactive)│
+└──────────────┘                   └──────────────┘  capture-pane └──────────────┘
 ```
 
 1. **MCP server** exposes terminal control tools over stdio
@@ -55,8 +60,8 @@ wsl tmux -V                         # verify, e.g. "tmux 3.6"
 <summary><strong>macOS / Linux</strong></summary>
 
 ```bash
-git clone https://github.com/coreai-microsoft/cli-interactive-tester.git
-cd cli-interactive-tester
+git clone https://github.com/banrahan/clint.git
+cd clint
 uv venv .venv --python 3.12
 source .venv/bin/activate
 uv pip install -e .
@@ -72,22 +77,22 @@ uv pip install -e .
 Because the MCP server must run inside WSL (see prerequisites), create the venv **inside WSL**, not on the Windows side. You can keep the repo checked out on the Windows filesystem and access it from WSL via `/mnt/c/...`.
 
 ```powershell
-git clone https://github.com/coreai-microsoft/cli-interactive-tester.git
-cd cli-interactive-tester
+git clone https://github.com/banrahan/clint.git
+cd clint
 
 # Install uv inside WSL (one-time)
 wsl bash -lc "curl -LsSf https://astral.sh/uv/install.sh | sh"
 
 # Create a Linux venv inside the repo and install the package editable
-wsl bash -lc "cd /mnt/c/Repos/cli-interactive-tester && ~/.local/bin/uv venv .venv-wsl --python 3.12 && ~/.local/bin/uv pip install --python .venv-wsl/bin/python -e ."
+wsl bash -lc "cd /mnt/c/Repos/clint && ~/.local/bin/uv venv .venv-wsl --python 3.12 && ~/.local/bin/uv pip install --python .venv-wsl/bin/python -e ."
 
 # Sanity check
-wsl /mnt/c/Repos/cli-interactive-tester/.venv-wsl/bin/python -c "import auto_test_tool.mcp_server; print('OK')"
+wsl /mnt/c/Repos/clint/.venv-wsl/bin/python -c "import clint.mcp_server; print('OK')"
 ```
 
 > **Note**: If you don't want `uv`, substitute `python3 -m venv .venv-wsl && .venv-wsl/bin/pip install -e .` inside WSL.
 
-> **Note**: Adjust `/mnt/c/Repos/cli-interactive-tester` to wherever you cloned the repo.
+> **Note**: Adjust `/mnt/c/Repos/clint` to wherever you cloned the repo.
 
 </details>
 
@@ -101,17 +106,17 @@ Add this entry to your Copilot CLI MCP config at **`~/.copilot/mcp-config.json`*
 ```json
 {
   "mcpServers": {
-    "cli-interactive-tester": {
+    "clint": {
       "type": "stdio",
       "command": "<FULL-PATH-TO-REPO>/.venv/bin/python",
-      "args": ["-m", "auto_test_tool.mcp_server"],
+      "args": ["-m", "clint.mcp_server"],
       "cwd": "<FULL-PATH-TO-REPO>"
     }
   }
 }
 ```
 
-Example path: `/Users/you/working/cli-interactive-tester`
+Example path: `/Users/you/working/clint`
 
 </details>
 
@@ -123,20 +128,20 @@ On Windows the server is launched **through `wsl`** so it can reach `tmux`. Poin
 ```json
 {
   "mcpServers": {
-    "cli-interactive-tester": {
+    "clint": {
       "type": "stdio",
       "command": "wsl",
       "args": [
         "bash",
         "-lc",
-        "cd /mnt/c/Repos/cli-interactive-tester && exec .venv-wsl/bin/python -m auto_test_tool.mcp_server"
+        "cd /mnt/c/Repos/clint && exec .venv-wsl/bin/python -m clint.mcp_server"
       ]
     }
   }
 }
 ```
 
-Replace `/mnt/c/Repos/cli-interactive-tester` with the WSL path to your clone (a Windows path like `C:\Repos\foo` becomes `/mnt/c/Repos/foo`).
+Replace `/mnt/c/Repos/clint` with the WSL path to your clone (a Windows path like `C:\Repos\foo` becomes `/mnt/c/Repos/foo`).
 
 </details>
 
@@ -147,12 +152,29 @@ Replace `/mnt/c/Repos/cli-interactive-tester` with the WSL path to your clone (a
 Open a **new** Copilot CLI session (so it picks up the config) and say:
 
 ```
-Use the cli-interactive-tester to load the scenario at scenarios/smoke-test.yaml,
+Use the clint to load the scenario at scenarios/smoke-test.yaml,
 then start the session and accomplish the goals. If the scenario declares pre or
 post hooks, run them before/after the session. Take screenshots at each step.
 ```
 
 That's it. Copilot CLI will use `load_scenario` to read the goals, then call `run_pre_hooks` (if any), `start_session`, `observe`, `send_action`, `finish_session`, and `run_post_hooks` (if any) to drive the CLI.
+
+## Testing AI coding assistants
+
+clint isn't only for testing *your* CLI — the CLI under test can itself be an AI coding assistant. Point a scenario at **Copilot CLI**, **Claude Code**, or **Codex**, give it a task as a goal, and let clint verify the assistant actually did it (file created, command run, expected output present).
+
+This is useful for:
+
+- **Smoke-testing an assistant's setup** (auth, permissions, tool access) in CI.
+- **Regression-testing prompts or agent flows** against real terminal output.
+- **Comparing assistants** on the same task with identical, replayable scenarios.
+
+Two ready-to-run examples ship in `scenarios/`:
+
+- [`copilot-hello-world.yaml`](scenarios/copilot-hello-world.yaml) — drives Copilot CLI to create and run a `hello.py`.
+- [`claude-code-hello-world.yaml`](scenarios/claude-code-hello-world.yaml) — the same task driven through Claude Code.
+
+> Both pass non-interactive permission flags (e.g. Copilot's `--allow-all-tools`, Claude Code's `--dangerously-skip-permissions`) so the assistant runs unattended. Only do this in disposable working directories.
 
 ## Writing Scenarios
 

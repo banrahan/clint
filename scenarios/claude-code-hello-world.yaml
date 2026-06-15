@@ -1,0 +1,35 @@
+name: "claude-code-hello-world"
+# Drive an interactive Claude Code session and ask it to create a simple
+# hello world Python file. Smoke test for "can we run Claude Code inside
+# clint and have it carry out a basic file-creation task".
+#
+# `--dangerously-skip-permissions` lets Claude Code run unattended without
+# stopping to prompt for file/shell permissions. Run only in a disposable
+# working directory. Adjust the command/flags to match your Claude Code setup.
+command: "claude --dangerously-skip-permissions"
+cwd: "/tmp/claude-hello-{instance}"
+
+pre:
+  - run: "rm -rf /tmp/claude-hello-{instance} && mkdir -p /tmp/claude-hello-{instance}"
+    cwd: "/tmp"
+    name: "prepare working dir"
+
+goals:
+  - "Wait for the Claude Code prompt to be ready (look for the input box)."
+  - >
+    Send the input: "Create a file called hello.py in the current directory
+    that prints 'Hello, world!' when run. Just create the file and stop."
+  - "Wait for Claude Code to report that hello.py was created."
+  - "Verify the file exists and prints the expected output by running
+     `python3 hello.py` in a separate shell (host side), confirming the
+     output is 'Hello, world!'."
+  - "Exit the Claude Code session cleanly (Ctrl-C or /exit)."
+  - "Take a screenshot of the final terminal state."
+
+post:
+  - run: "ls -la /tmp/claude-hello-{instance}"
+    name: "list resulting files"
+    continue_on_error: true
+  - run: "rm -rf /tmp/claude-hello-{instance}"
+    name: "cleanup working dir"
+    continue_on_error: true

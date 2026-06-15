@@ -7,7 +7,7 @@ This module provides a tmux-backed terminal session that an external agent
 terminal state and sends actions.
 
 Usage:
-    from auto_test_tool.agent import AgentSession
+    from clint.agent import AgentSession
 
     session = AgentSession("azd ai agent init", cwd="~/agents/test")
     session.start()

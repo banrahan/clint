@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from auto_test_tool import mcp_server, ports
+from clint import mcp_server, ports
 
 
 @pytest.fixture(autouse=True)
@@ -106,7 +106,7 @@ pre:
 
     captured = {}
 
-    from auto_test_tool import hooks as hooks_mod
+    from clint import hooks as hooks_mod
 
     def fake_execute(hook_list):
         captured["hooks"] = list(hook_list)
@@ -187,7 +187,7 @@ pre:
 
     captured = {}
 
-    from auto_test_tool import hooks as hooks_mod
+    from clint import hooks as hooks_mod
 
     def fake_execute(hook_list):
         captured["hooks"] = list(hook_list)

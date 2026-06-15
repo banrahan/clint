@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from auto_test_tool import mcp_server, ports
+from clint import mcp_server, ports
 
 
 @pytest.fixture(autouse=True)
