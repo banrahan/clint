@@ -1,7 +1,7 @@
 [project]
-name = "auto-test-tool"
+name = "clint"
 version = "0.2.0"
-description = "MCP server for Copilot CLI-driven testing of interactive CLI flows"
+description = "clint — drive and test interactive CLIs and AI coding assistants (Copilot CLI, Claude Code, Codex) with goal-based scenarios over MCP"
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.0",
@@ -15,10 +15,10 @@ dev = [
 ]
 
 [project.scripts]
-azd-test-mcp = "auto_test_tool.mcp_server:main"
+clint = "clint.mcp_server:main"
 
 [tool.setuptools.packages.find]
-include = ["auto_test_tool*"]
+include = ["clint*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

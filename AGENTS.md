@@ -1,4 +1,4 @@
-# Agent guidelines for `cli-interactive-tester`
+# Agent guidelines for `clint`
 
 This file is read automatically by AI coding assistants (Copilot CLI,
 Codex, Claude Code, etc.). It captures non-obvious conventions for
@@ -11,7 +11,7 @@ something went wrong before it. Don't relax them without a good reason.
 
 ## Driving the MCP (scenario execution)
 
-When you are the agent driving `cli-interactive-tester`'s MCP tools to
+When you are the agent driving `clint`'s MCP tools to
 run a scenario:
 
 ### Do NOT verify after `select(choice_text=...)` — these runs are tests
@@ -90,7 +90,7 @@ license to push through later anomalies. Re-confirm at each anomaly.
 
 If a tool returns something surprising (silently picks the wrong item,
 returns the wrong type, ignores a parameter), open the implementation
-in `auto_test_tool/` and trace the call path **before** retrying or
+in `clint/` and trace the call path **before** retrying or
 working around it. The "Project Vienna" mispick that birthed this
 file's verification rule was a 12-line silent-fallback bug that two
 retries would have repeated. Reading `agent.py` for ~30 seconds was
@@ -146,7 +146,7 @@ HOME, so "clean install" tests pollute real config and auth.
 ### Tests are hermetic — keep them that way
 
 All tests under `tests/` run without touching tmux, Azure, or any
-external service. The tmux primitives in `auto_test_tool.agent`
+external service. The tmux primitives in `clint.agent`
 (`tmux_capture_pane`, `tmux_send_keys`, `tmux_send_text`) are imported
 at module level so they can be monkeypatched. Follow the
 `FakeTmux` pattern in `tests/test_select_by_text.py` for any new

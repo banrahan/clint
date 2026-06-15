@@ -22,7 +22,7 @@ Resources:
     scenario://{path} — Read a scenario YAML file
 
 Run with:
-    python -m auto_test_tool.mcp_server
+    python -m clint.mcp_server
 """
 
 import os
@@ -36,7 +36,7 @@ from .ports import PortPool, get_pool, merged_vars, release_pool
 from .template import substitute_in_mapping, substitute_template
 
 mcp = FastMCP(
-    "azd-test-tool",
+    "clint",
     instructions="""You are driving an interactive CLI session running in a tmux terminal.
 
 Your workflow:

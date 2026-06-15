@@ -1,8 +1,8 @@
 name: "smoke-test"
-command: "echo 'Hello from auto-test-tool' && sleep 1 && echo 'Done'"
+command: "echo 'Hello from clint' && sleep 1 && echo 'Done'"
 cwd: "/tmp"
 
 goals:
-  - "Wait for 'Hello from auto-test-tool' to appear"
+  - "Wait for 'Hello from clint' to appear"
   - "Wait for 'Done' to appear"
   - "Take a screenshot of the final state"

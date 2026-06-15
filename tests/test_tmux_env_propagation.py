@@ -13,11 +13,11 @@ from __future__ import annotations
 import subprocess
 from unittest.mock import patch
 
-from auto_test_tool.runner import tmux_create_session
+from clint.runner import tmux_create_session
 
 
 def _captured_argv(env: dict[str, str]) -> list[str]:
-    with patch("auto_test_tool.runner.subprocess.run") as mock_run:
+    with patch("clint.runner.subprocess.run") as mock_run:
         mock_run.return_value = subprocess.CompletedProcess([], 0)
         tmux_create_session("s1", "bash", "/tmp", env)
         ((argv,), _kwargs) = mock_run.call_args

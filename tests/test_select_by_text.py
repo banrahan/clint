@@ -1,14 +1,14 @@
 """Hermetic tests for select_by_text.
 
 These tests monkeypatch the three tmux primitives in
-``auto_test_tool.agent`` so they can drive the real ``_select_by_text``
+``clint.agent`` so they can drive the real ``_select_by_text``
 implementation against scripted pane captures without touching tmux.
 """
 from __future__ import annotations
 
 import pytest
 
-from auto_test_tool import agent as agent_mod
+from clint import agent as agent_mod
 
 
 class FakeTmux:
